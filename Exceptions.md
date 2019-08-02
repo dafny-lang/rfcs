@@ -21,13 +21,13 @@ At the moment, we're writing a lot of code of the following form:
 ```
 var res1: Result<T1> := operation1(args1);
 if res1.Failure? {
-	return Failure(res1.error);
+    return Failure(res1.error);
 }
 var value1: T1 := res1.get;
 
 var res2: Result<T2> := operation2(args2);
 if res2.Failure? {
-	return Failure(res2.error);
+    return Failure(res2.error);
 }
 var value2: T2 := res2.get;
 
@@ -77,15 +77,15 @@ to be syntactic sugar for
 ```
 var res_v: Result<T> := MethodCall(args);
 if res_v.Failure? {
-	return Failure(res_v.error);
+    return Failure(res_v.error);
 }
 var v := res_v.value;
 ... rest of the code using v as if it had type T ...
 ```
 
-as far as verification and Boogie is concerned.
+as far as verification and Boogie are concerned.
 
-We will not really implement it as syntactic sugar, though, because we want a separate AST node for this so that the compiler can regognize it easily.
+We will not really implement it as syntactic sugar, though, because we want a separate AST node for this so that the compiler can recognize it easily.
 
 The compiler will then compile all methods which return `Result<T>` into C# methods with signatures of the form
 
@@ -152,14 +152,17 @@ and the handling of the failure case is done by C#'s exception mechanism.
 
 ## FAQ
 
-*Q:* Are we also adding special syntax/support for this inside expressions?
-*A:* Not at the moment
+**Q:** Are we also adding special syntax/support for this inside expressions?
 
-*Q:* What about target languages which do not have exceptions, such as Go?
-*A:* Go uses a pattern of returning an additional return value to report success/failure, and the Dafny-to-Go compiler would use this pattern too. In general, the idea is to compile `Result<T>` to the idiomatic way of dealing with failure in the target language, be it exceptions, extra return values, `Option`, `Maybe`, ...
+**A:** Not at the moment
 
-*Q:* Can this work for methods which have multiple return values?
-*A:* It seems so.
+**Q:** What about target languages which do not have exceptions, such as Go?
+
+**A:** Go uses a pattern of returning an additional return value to report success/failure, and the Dafny-to-Go compiler would use this pattern too. In general, the idea is to compile `Result<T>` to the idiomatic way of dealing with failure in the target language, be it exceptions, extra return values, `Option`, `Maybe`, ...
+
+**Q:** Can this work for methods which have multiple return values?
+
+**A:** It seems so.
 
 
 ## Discussion points, open questions
@@ -181,16 +184,21 @@ Should the following be supported?
 
 ```
 method Test() returns (res: Result<int32>) {
-	res := someMethodCall();
-	if changedMyMind() {
-		res := someOtherMethodCall();
-	}
+    res := someMethodCall();
+    if changedMyMind() {
+        res := someOtherMethodCall();
+    }
 }
 ```
 
 The most straightforward way of supporting this would be to surround `someMethodCall` and `someOtherMethodCall` with a `try/catch` block, materialize their result into a `Result<int32>`, and at the end of the method body, to return `res.get` or throw `res.error`.
 This seems inefficient, can we do better?
 Should it be supported at all, or would we only allow `return` in methods returning `Result`, but no assignment to the result variable?
+
+
+### What's the name for this?
+
+Googling `:-` will be very hard, so to make this new syntax less confusing, it would be good to agree on one canonical name for this feature, and use that same name everywhere (Dafny source code, documentation, blog posts, etc).
 
 
 ## Status
