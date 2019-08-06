@@ -196,6 +196,44 @@ This seems inefficient, can we do better?
 Should it be supported at all, or would we only allow `return` in methods returning `Result`, but no assignment to the result variable?
 
 
+### What about exception-throwing methods returning void?
+
+The C# signature
+
+```
+void Test() throws Exception
+```
+
+would be represented as 
+
+```
+method Test() returns (res: Result<Void>)
+```
+
+in Dafny, where
+
+```
+datatype Void = Void
+```
+
+is a single-constructor datatype to be added. Should `Void` also be a hardcoded type, or part of an always-included library?
+
+Moreover, how should such methods be called?
+
+```
+// (1)
+var _ :- Test();
+
+// (2)
+:- Test();
+
+// (3)
+Test();
+```
+
+Note that (3) currently is rejected by Dafny ("wrong number of method result arguments (got 0, expected 1)"), so (3) would not change the semantics of any existing valid Dafny code.
+
+
 ### What's the name for this?
 
 Googling `:-` will be very hard, so to make this new syntax less confusing, it would be good to agree on one canonical name for this feature, and use that same name everywhere (Dafny source code, documentation, blog posts, etc).
