@@ -171,24 +171,25 @@ While a client is debugging their app, it would be useful for them to get a stac
 The grammar of expressions is augmented with the following two forms:
 
 ```
-var x :- E; F
+var x: T :- E; F
 :- E; F
 ```
 
-where `E` and `F` are expressions, and `x` is a variable name or a pattern.
+where `E` and `F` are expressions, `T` is a type, and `x` is a variable name or a pattern.
 
 The grammar of statements is augmented with the following six forms:
 
 ```
-var x :- M(...);
+var x: T :- M(...);
 y :- M(...);
 :- M(...);
-var x :- E;
+var x: T :- E;
 y :- E;
 :- E;
 ```
 
-where `M` is a method name, `E` is an expression, `x` is a variable name or a pattern, and `y` is a (previously declared) variable.
+where `M` is a method name, `E` is an expression, `T` is a type, `x` is a variable name or a pattern, and `y` is a (previously declared) variable.
+The `: T` annotation is optional both for expressions and statements.
 
 We say that a type `A` `SupportsNonVoidErrorHandling` if all of these are true:
 * it has a member called `IsFailure`
@@ -205,9 +206,9 @@ Note that we do not make any requirements on how many arguments and how many typ
 In the following, we will define how each of the above new grammar forms is desugared.
 Let `EorM` be an expression or method call, let `TM` be its type, let `E` be an expression, let `TE` be the type of `E` and let `temp` denote a fresh variable name.
 
-* Expression `var x :- E; F`: If `TE` `SupportsNonVoidErrorHandling` then desugar into `var temp := E; if temp.IsFailure() then temp.PropagateFailure() else var x := temp.Extract(); F` else emit error "`TE` does not support non-void error handling"
+* Expression `var x: T :- E; F`: If `TE` `SupportsNonVoidErrorHandling` then desugar into `var temp := E; if temp.IsFailure() then temp.PropagateFailure() else var x: T := temp.Extract(); F` else emit error "`TE` does not support non-void error handling"
 * Expression `:- E; F`: If `TE` `SupportsVoidErrorHandling` then desugar into `var temp := E; if temp.IsFailure() then temp.PropagateFailure() else F` else emit error "`TE` does not support void error handling"
-* Statement `var x :- EorM;`: If `TM` `SupportsNonVoidErrorHandling` then desugar into `var temp := EorM; if temp.IsFailure() { return temp.PropagateFailure(); } var x := temp.Extract();` else emit error "`TM` does not support non-void error handling"
+* Statement `var x: T :- EorM;`: If `TM` `SupportsNonVoidErrorHandling` then desugar into `var temp := EorM; if temp.IsFailure() { return temp.PropagateFailure(); } var x: T := temp.Extract();` else emit error "`TM` does not support non-void error handling"
 * Statement `y :- EorM;`: If `TM` `SupportsNonVoidErrorHandling` then desugar into `var temp := EorM; if temp.IsFailure() { return temp.PropagateFailure(); } y := temp.Extract();` else emit error "`TM` does not support non-void error handling"
 * Statement `:- EorM;`: If `TM` `SupportsVoidErrorHandling` then desugar into `var temp := EorM; if temp.IsFailure() { return temp.PropagateFailure(); }` else emit error "`TM` does not support void error handling"
 
