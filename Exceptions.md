@@ -2,15 +2,120 @@
 
 ## Preliminaries
 
+The examples in this document depend on the following small "library":
+
+```
+function method Unreachable<R>(): R
+    requires false 
+{
+    var o: Option<R> := None;
+    assert o.Some?;
+    o.get
+}
+
+datatype Option<T> = None | Some(get: T)
+```
+
 By `Result<T>`, we mean the following datatype:
 
 ```
 datatype Result<T> =
 | Success(value: T)
 | Failure(error: string)
+{
+    predicate method IsFailure() { 
+        this.Failure?
+    }
+	function method PropagateFailure<U>(): Result<U> requires IsFailure() {
+        Failure<U>(this.error)
+    }
+	function method Extract(): T requires !IsFailure() { 
+        this.value
+    }
+}
+```
+
+Note that this is a datatype with instance methods, a feature which is not yet in Dafny at the moment, but will soon be added.
+
+Moreover, we will also use a type `NatOutcome`, which is a bit like `Result`, but uses traits and classes instead of a dataype, and hardcodes the type `T` to be `nat`:
+
+```
+trait NatOutcome {
+    predicate method IsFailure()
+	function method PropagateFailure(): NatOutcome requires IsFailure()
+	function method Extract(): nat requires !IsFailure()
+}
+
+class NatSuccess extends NatOutcome {
+    const value: nat
+    constructor(value: nat) {
+        this.value := value;
+    }
+    predicate method IsFailure() { 
+        false 
+    }
+	function method PropagateFailure(): NatOutcome requires IsFailure() {
+        Unreachable<NatOutcome>() 
+    }
+	function method Extract(): nat requires !IsFailure() { 
+        value
+    }
+}
+
+class NatFailure extends NatOutcome {
+    predicate method IsFailure() { 
+        true
+    }
+	function method PropagateFailure(): NatOutcome requires IsFailure() {
+        this
+    }
+	function method Extract(): nat requires !IsFailure() { 
+        Unreachable<nat>()
+    }
+}
+```
+
+And finally, the example will also use a generic `Outcome<T>` type, which is not supported by Dafny at the moment, because traits can't have type parameters, but we want to keep this example in mind in the design because type parameters might be added to traits at some point.
+
+```
+trait Outcome<T> {
+    predicate method IsFailure()
+	function method PropagateFailure<U>(): Outcome<U> requires IsFailure()
+	function method Extract(): T requires !IsFailure()
+}
+
+class Success<T> extends Outcome<T> {
+    const value: T
+    constructor(value: T) {
+        this.value := value;
+    }
+    predicate method IsFailure() { 
+        false 
+    }
+	method PropagateFailure<U>() returns (o: Outcome<U>) requires IsFailure() {
+        o := Unreachable<Outcome<U>>();
+    }
+	method Extract() returns (t: T) requires !IsFailure() { 
+        t := value;
+    }
+}
+
+class Failure<T> extends Outcome<T> {
+    const error: string
+    predicate method IsFailure() { 
+        true
+    }
+	method PropagateFailure<U>() returns (o: Outcome<U>) requires IsFailure() {
+        o := Failure<U>(this.error);
+    }
+	method Extract() returns (t: T) requires !IsFailure() { 
+        t := Unreachable<T>();
+    }
+}
 ```
 
 For simplicity, we use "C#" to refer to any target language into which Dafny compiles.
+
 
 ## Motivations
 
@@ -23,13 +128,13 @@ var res1: Result<T1> := operation1(args1);
 if res1.Failure? {
     return Failure(res1.error);
 }
-var value1: T1 := res1.get;
+var value1: T1 := res1.value;
 
 var res2: Result<T2> := operation2(args2);
 if res2.Failure? {
     return Failure(res2.error);
 }
-var value2: T2 := res2.get;
+var value2: T2 := res2.value;
 
 ...
 ```
@@ -61,33 +166,57 @@ For instance, if the exception is a network failure, and we're in an application
 While a client is debugging their app, it would be useful for them to get a stack trace in case of unhandled exceptions which goes all the way through the stack, and is not interrupted by the Dafny layer.
 
 
-## Implementation
+## Language-level changes
 
-The type `Result<T>` is hardcoded into Dafny, the same way as `seq`, `map`, `int`, etc.
-
-Given a `MethodCall(args)` which returns `Result<T>`, let's define
+The grammar of expressions is augmented with the following two forms:
 
 ```
-var v :- MethodCall(args);
-... rest of the code using v as if it had type T ...
+var x :- E; F
+:- E; F
 ```
 
-to be syntactic sugar for
+where `E` and `F` are expressions, and `x` is a variable name or a pattern.
+
+The grammar of statements is augmented with the following six forms:
 
 ```
-var res_v: Result<T> := MethodCall(args);
-if res_v.Failure? {
-    return Failure(res_v.error);
-}
-var v := res_v.value;
-... rest of the code using v as if it had type T ...
+var x :- M(...);
+y :- M(...);
+:- M(...);
+var x :- E;
+y :- E;
+:- E;
 ```
 
-as far as verification and Boogie are concerned.
+where `M` is a method name, `E` is an expression, `x` is a variable name or a pattern, and `y` is a (previously declared) variable.
 
-We will not really implement it as syntactic sugar, though, because we want a separate AST node for this so that the compiler can recognize it easily.
+We say that a type `A` `SupportsNonVoidErrorHandling` if all of these are true:
+* it has a member called `IsFailure`
+* it has a member called `PropagateFailure`
+* it has a member called `Extract`
 
-The compiler will then compile all methods which return `Result<T>` into C# methods with signatures of the form
+We say that a type `A` `SupportsVoidErrorHandling` if it has the following members:
+* it has a member called `IsFailure`
+* it has a member called `PropagateFailure`
+* it has no member called `Extract`
+
+Note that we do not make any requirements on how many arguments and how many type parameters the above members have, nor on their return types, nor on whether they are functions, function methods, methods, or ghost methdos; as long as the code produced (as described below) makes type parameter inference and typechecking work, it's fine.
+
+In the following, we will define how each of the above new grammar forms is desugared.
+Let `EorM` be an expression or method call, let `TM` be its type, let `E` be an expression, let `TE` be the type of `E` and let `temp` denote a fresh variable name.
+
+* Expression `var x :- E; F`: If `TE` `SupportsNonVoidErrorHandling` then desugar into `var temp := E; if temp.IsFailure() then temp.PropagateFailure() else var x := temp.Extract(); F` else emit error "`TE` does not support non-void error handling"
+* Expression `:- E; F`: If `TE` `SupportsVoidErrorHandling` then desugar into `var temp := E; if temp.IsFailure() then temp.PropagateFailure() else F` else emit error "`TE` does not support void error handling"
+* Statement `var x :- EorM;`: If `TM` `SupportsNonVoidErrorHandling` then desugar into `var temp := EorM; if temp.IsFailure() { return temp.PropagateFailure(); } var x := temp.Extract();` else emit error "`TM` does not support non-void error handling"
+* Statement `y :- EorM;`: If `TM` `SupportsNonVoidErrorHandling` then desugar into `var temp := EorM; if temp.IsFailure() { return temp.PropagateFailure(); } y := temp.Extract();` else emit error "`TM` does not support non-void error handling"
+* Statement `:- EorM;`: If `TM` `SupportsVoidErrorHandling` then desugar into `var temp := EorM; if temp.IsFailure() { return temp.PropagateFailure(); }` else emit error "`TM` does not support void error handling"
+
+Note that there are cases where the desugaring succeeds, yet the typechecker will fail on the produced desugared expression, and this is intended.
+
+
+## Dafny-to-C# compiler changes
+
+The compiler will compile all methods which return a type which `SupportsErrorHandling` into C# methods with signatures of the form
 
 ```
 public T MethodCall(A1 a1, A2 a2, ...) throws Exception
@@ -152,17 +281,17 @@ and the handling of the failure case is done by C#'s exception mechanism.
 
 ## FAQ
 
-**Q:** Are we also adding special syntax/support for this inside expressions?
-
-**A:** Not at the moment
-
 **Q:** What about target languages which do not have exceptions, such as Go?
 
 **A:** Go uses a pattern of returning an additional return value to report success/failure, and the Dafny-to-Go compiler would use this pattern too. In general, the idea is to compile `Result<T>` to the idiomatic way of dealing with failure in the target language, be it exceptions, extra return values, `Option`, `Maybe`, ...
 
 **Q:** Can this work for methods which have multiple return values?
 
-**A:** It seems so.
+**A:** Not really, but one can always just return a tuple.
+
+**Q:** Should `IsFailure`, `PropagateFailure`, `Extract` be functions or methods?
+
+**A:** `IsFailure` has to be a function, because it appears in the preconditions of the other two. We allow the user to choose whether `PropagateFailure` and `Extract` are functions, function methods, methods or ghost methods, but depending on what the user chooses, this exception handling feature might not be available in expressions or in statements. Note that requiring them to be function methods would prevent `PropagateFailure` from allocating a new object.
 
 
 ## Discussion points, open questions
@@ -191,47 +320,9 @@ method Test() returns (res: Result<int32>) {
 }
 ```
 
-The most straightforward way of supporting this would be to surround `someMethodCall` and `someOtherMethodCall` with a `try/catch` block, materialize their result into a `Result<int32>`, and at the end of the method body, to return `res.get` or throw `res.error`.
+The most straightforward way of supporting this would be to surround `someMethodCall` and `someOtherMethodCall` with a `try/catch` block, materialize their result into a `Result<int32>`, and at the end of the method body, to return `res.value` or throw `res.error`.
 This seems inefficient, can we do better?
 Should it be supported at all, or would we only allow `return` in methods returning `Result`, but no assignment to the result variable?
-
-
-### What about exception-throwing methods returning void?
-
-The C# signature
-
-```
-void Test() throws Exception
-```
-
-would be represented as 
-
-```
-method Test() returns (res: Result<Void>)
-```
-
-in Dafny, where
-
-```
-datatype Void = Void
-```
-
-is a single-constructor datatype to be added. Should `Void` also be a hardcoded type, or part of an always-included library?
-
-Moreover, how should such methods be called?
-
-```
-// (1)
-var _ :- Test();
-
-// (2)
-:- Test();
-
-// (3)
-Test();
-```
-
-Note that (3) currently is rejected by Dafny ("wrong number of method result arguments (got 0, expected 1)"), so (3) would not change the semantics of any existing valid Dafny code.
 
 
 ### What's the name for this?
