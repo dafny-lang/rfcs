@@ -10,8 +10,9 @@ This RFC gives a concrete proposal for adding `for` loops to Dafny.
 [motivation]: #motivation
 
 Dafny has only one kind of loop, `while` loops (with either one guard or with a set of guards). Some tasks
-where other languages require a loop can be done in Dafny with the aggregate `forall` statement. Still,
-some situations call for a loop with a loop index just like what a typical `for` loop provides. This RFC
+where other languages require a loop can be done in Dafny with the aggregate `forall` statement, avoiding
+iteration altogether. Still, some situations call for a loop with a loop index and iteration pattern just
+like what a typical `for` loop provides. This RFC
 gives a concrete proposal, so that design aspects of `for` loops in the context of Dafny can be discussed.
 
 Two central design points are:     
@@ -65,7 +66,7 @@ has the meaning
 var _lo := lo;
 var _hi := hi;
 assert _lo <= _hi;  // this is Dafny-like
-assert forall _i :: _lo <= _i <= _hi ==> /* _i is a value of the type of I */
+assert forall _i :: _lo <= _i <= _hi ==> /* _i is a value of the type of I */;
 var i := _lo;
 while i < _hi
   invariant _lo <= i <= _hi  // automatically generated
@@ -94,7 +95,7 @@ has the meaning
 var _lo := lo;
 var _hi := hi;
 assert _lo <= _hi;
-assert forall _i :: _lo <= _i <= _hi ==> /* _i is a value of the type of I */
+assert forall _i :: _lo <= _i <= _hi ==> /* _i is a value of the type of I */;
 var i := _hi;  // this is different from the "up" loop
 while _lo < i  // this is different from the "up" loop
   invariant _lo <= i <= _hi
@@ -105,6 +106,9 @@ while _lo < i  // this is different from the "up" loop
   Body
 }
 ```
+
+Note that the "up" loop performs a post-increment of `i`, whereas the "down" loop
+performs a pre-decrement of `i`. This is common in computer science.
 
 Note that in both cases, `Body` is never executed with `i` having the value `hi`.
 This is likely to lead to confusion for users who are used to adding those
@@ -133,8 +137,8 @@ The proposal introduces 3 new keywords: `for`, `to`, `downto`. Alternatives are:
 # Prior art
 [prior-art]: #prior-art
 
-Most popular languages have some form of `for` loop. In C, the first line of the
-proposed `for` loops would look like:
+Most popular languages have some form of `for` loop. In C-like languages, the first
+line of the proposed `for` loops would look like:
 
 ``` C
 for (int i = lo; i < hi; i++)
@@ -146,13 +150,13 @@ the issue of prohibiting other updates of `i`.
 "Down" loops written in C look like:
 
 ``` C
-for (int i = hi; lo < --i; )
+for (int i = hi; lo <= --i; )
 ```
 
 The Eiffel programming language supports loop invariants. It has an `until`
 condition, which says when to terminate, rather than the negated termination
 condition of standard `while` loops and C's `for` loop. The update of the
-loop index is provided in the program text, as for common `while` loops.
+loop index is provided in the program text, as in C and as for common `while` loops.
 
 Why3 supports the OCaml-like `for` loop
 
