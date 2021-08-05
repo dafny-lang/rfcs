@@ -127,20 +127,18 @@ To distribute the src/source.dfy library to other projects, all files in the out
 # Implementation
 [reference-level-explanation]: #reference-level-explanation
 
+Dafny already has an internal module flag that skips verification for that module. This can be used for modules parsed as a library.
+
+To emit separate compilation artefacts for each included library, changes to the compilation back-ends should be made. Hopefully these changes can be generic and work for each back-end, such as repeatedly calling a specific back-end for each included library.
+
 To let Dafny determine which files need to be re-emitting, it can either compare the timestamps of previously emitted files with the timestamps of input files, or it can store a unique hash of the used input files in the emitted file, and read that on a next run to determine whether the file is outdated or not.
 
-<!-- This is the technical portion of the RFC. Explain the design in sufficient detail that:
+When generating a `.lib.dfy` file, include directives are removed from the output.
 
-- Its interaction with other features is clear.
-- It is reasonably clear how the feature would be implemented.
-- Corner cases are dissected by example.
-
-The section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work. -->
-
-<!-- # Drawbacks
+# Why should we *not* do this?
 [drawbacks]: #drawbacks
 
-Why should we *not* do this? -->
+Extra command line options add extra complexity, but that cost is small compared to the problem this RFC is solving.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
@@ -149,10 +147,8 @@ Alternatives would be:
 - Instead of introducing a new command line option, let the Dafny CLI use the extension of a file to determine whether to treat it as a library or a source file.
 - Use a different name for the `/library` option and `/compileTarget:library`, such as `dependency` or `package`.
 - Let `dafny` reject any files passed to `/library` that do not end in a `.lib.dfy` extension, to make it less likely that unverified files are accidentally passed as a library.
-  
-<!-- - Why is this design the best in the space of possible designs?
-- What other designs have been considered and what is the rationale for not choosing them?
-- What is the impact of not doing this? -->
+
+TODO: choose whether to use any of these alternatives and explain why or why not.
 
 # Prior art
 [prior-art]: #prior-art
@@ -171,18 +167,7 @@ The .NET build tool `dotnet`, which can consume `.csproj` files to build C# proj
 
 `GCC` uses the extension of input files to determine what operations need to be performed ([link](https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html#Overall-Options)).
 
-<!-- Discuss prior art, both the good and the bad, in relation to this proposal.
-A few examples of what this can include are:
-
-- For language, library, tools, and compiler proposals: Does this feature exist in other programming languages and what experience have their community had?
-- For community proposals: Is this done by some other community and what were their experiences with it?
-- For other teams: What lessons can we learn from what other communities have done here?
-- Papers: Are there any published papers or great posts that discuss this? If you have some relevant papers to refer to, this can serve as a more detailed theoretical background.
-
-This section is intended to encourage you as an author to think about the lessons from other languages, provide readers of your RFC with a fuller picture.
-If there is no prior art, that is fine - your ideas are interesting to us whether they are brand new or if it is an adaptation from other languages.
-
-Note that while precedent set by other languages is some motivation, it does not on its own motivate an RFC. -->
+TODO: add more information.
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
@@ -190,10 +175,6 @@ Note that while precedent set by other languages is some motivation, it does not
 Out of scope for this RFC are:
 - Support distributing Dafny libraries
 - Enable verifying large Dafny program with optimal concurrency, without requiring make files or include directives.
-
-<!-- What parts of the design do you expect to resolve through the RFC process before this gets merged?
-- What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
-- What related issues do you consider out of scope for this RFC that could be addressed in the future independently of the solution that comes out of this RFC? -->
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
