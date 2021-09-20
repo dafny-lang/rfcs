@@ -41,11 +41,12 @@ This proposal does not aim to add concurrency primitives to Dafny, or even propo
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-In most Dafny code, you will not have to specify a reads clause on any methods, as they are permitted to read any mutable state by default. In some cases the specification for a method needs to be more precise, however. In particular, invoking a compiled method from external, native code in a concurrent environment is much more likely to be safe if the method does not read or write any shared mutable state. It is now possible to specify this requirement by using `reads` clauses on methods as well as functions. For example:
+In most Dafny code, you will not have to specify a reads clause on any methods, as they are permitted to read any mutable state by default. In some cases the specification for a method needs to be more precise, however. In particular, invoking a compiled method from external, native code in a concurrent environment is much more likely to be safe if the method does not read or write any shared mutable state. It will now be possible to specify this requirement by using `reads` clauses on methods as well as functions. For example:
 
 ```dafny
 method {:extern} Fibonacci(n: nat) returns (r: nat)
   reads {}
+  // modifies {} -- This is the default so it can be omitted
 {
   var x, y := 0, 1;
   for i := 0 to n {
@@ -71,10 +72,14 @@ method {:extern} UnsafeMemoizedFibonacci(n: int, cacheBox: Box<map<nat, nat>>) r
     r := cache[n];
   } else {
     r := Fibonacci(n);
-    cacheBox.value := cache[n := r];
+    cacheBox.value := cache[n := r]; // Error: assignment may update an object not in the enclosing context's modifies clause
   }
 }
+```
 
+
+
+```dafny
 // TODO: example of permitted thread-local mutable state. Perhaps change to a polynomial datatype
 // which would like to use a stateful Fold-er type thingy over a sequence?
 
@@ -93,71 +98,53 @@ The wiki page on [Modelling External State Correctly](https://github.com/dafny-l
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-This is the technical portion of the RFC. Explain the design in sufficient detail that:
+Implementing the translation of `reads` clauses on methods to Boogie should be relatively straightforward, and reuse most of the translation of `reads` on functions and `modifies` on methods. The main change will be to split the `$_Frame` Boogie variable used by the `ExpressionTranslator` into two different variables named `$_ReadsFrame` and `$_ModifiesFrame`, so that they can both be defined and referenced for a single method body at the same time. This will have the side-effect of slightly increasing the readability of the translation of frame verification.
 
-- Its interaction with other features is clear.
-- It is reasonably clear how the feature would be implemented.
-- Corner cases are dissected by example.
-
-The section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
+TODO: ensuring the various language runtimes are thread-safe
 
 # Drawbacks
 [drawbacks]: #drawbacks
 
 The biggest potential drawback is that inexperienced Dafny programmers might have the incorrect impression that defining a tight `reads` clause for methods is necessary, and hence expend unnecessary effort for no benefit. The verifier would never prompt users to add `reads` clauses unless they already appear elsewhere in a codebase, so the issue is more that they could see them used in documentation or examples and not realize they are largely optional.
 
-Reusable Dafny code such as the modules in https://github.com/dafny-lang/libraries will need to specify `reads` clauses in order to support consumers that need to specify them. This does not appear to be a significant burden: at the time of writing this the `libraries` repo only contained one `method`. All other uses of the `method` keyword were in defining `function method`s instead, which already default to `reads {}` and hence can be used as is in the control flow of methods with `reads` clauses. Again, the issue is more that readers could imitate standard library `method` definitions and include superfluous `reads` clauses. The answer is likely to document explicitly why the standard library uses this feature and to emphasize that it should not be copied blindly. There is already a similar issue with the standard library's use of `{:trigger}` attributes, which are not encouraged in most Dafny codebases.
+Reusable Dafny code such as the modules in https://github.com/dafny-lang/libraries will need to specify `reads` clauses in order to support consumers that need to specify them. This does not appear to be a significant burden: at the time of writing this the `libraries` repo only contained one `method`. All other uses of the `method` keyword were in defining `function method`s instead, which already default to `reads {}` and hence can be used as is in the control flow of methods with `reads` clauses. Also note that adding a `reads` clause to a method that does not already have one will never break existing callers of that method. Again, the issue is more that users could imitate standard library `method` definitions and include superfluous `reads` clauses. The answer is likely to document explicitly why the standard library uses this feature and to emphasize that it should not be copied blindly. There is already a similar issue with the standard library's use of `{:trigger}` attributes, which are not encouraged in most Dafny codebases.
 
 There is a chance that if and when explicit concurrency support is added to Dafny, the much more limited solution of verifying a method body `reads` and `modifies` nothing may become unused. This would make supporting `reads` clauses on methods harmless but also a maintenance burden. On the other hand, the feature is a generic and independent concept with relatively low implementation complexity, and the extra information provided by `reads` clauses is potentially useful for verifier and compiler optimizations in the future. There is a reasonable chance that `reads` clauses will be part of the future solution for concurrency anyway.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-- 
+This proposal is intended to be a low-cost solution to thread-safety for Dafny. The main alternatives are as follows.
 
-- Expect Dafny users to synchronize
+## Accept and document that compiled Dafny is not thread-safe
 
-- Add direct support for concurrency to Dafny.
+We could make the intentional decision that Dafny currently does not support this use case. This would mean users that wish to use Dafny in possibly-concurrent environments have three options:
 
+1. Document that their own cross-compiled Dafny code is not thread-safe, and rely on downstream clients to avoid sharing objects.
+2. Wrap all invocations of compiled Dafny code with a common lock, in the style of a Global Interpreter Lock. This would be safer, but would also penalize single-threaded use cases with an unnecessary synchronization overhead.
+3. Ensure their compiled code is thread-safe by manual review and testing. This would be error-prone and especially unsatisfying given the static guarantees Dafny otherwise provides. It would also force end users to validate that the Dafny runtime implementations are thread-safe, which is not currently guaranteed, and even if currently true could regress in future versions of Dafny.
 
-- Why is this design the best in the space of possible designs?
-- What other designs have been considered and what is the rationale for not choosing them?
-- What is the impact of not doing this?
+## Add direct support for concurrency to Dafny
+
+If there is intentional use of shared mutable state in Dafny code that needs to be externally thread-safe, currently the only solution is to move this logic into external code and make use of synchronization features in the target language(s). This is unfortunate when a single `synchronized` block would hypothetically address a tiny race condition.
+
+Besides the fact that adding full concurrent support to Dafny will be a large and expensive undertaking, we need to be very careful about what paradigm we choose. Implementing `synchronized` blocks would imply that Dafny uses a shared memory model, but it's very possible something like message passing would make specifications eaiser to write and less costly to verify. Selecting or designing a paradigm for Dafny is particularly challenging given it has to be compilable to multiple target languages: a shared memory model compiles naturally to C# or Java, but much less so to Go. 
 
 # Prior art
 [prior-art]: #prior-art
 
-The most obvious prior art for this is the existing support in Dafny itself for `reads` on function definitions and `modifies` on methods. The implementation overlaps substantially with both, and mainly consists of allowing both kinds of frames to be defined and verified at once for method bodies.
+The most obvious prior art for this is the existing support in Dafny itself for `reads` on function definitions and `modifies` on methods.
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- Are there other use cases for this feature worth mentioning, aside from external thread-safety?
-
-- Ideas for how Dafny should tackle asynchronous or concurrent execution in general are out of scope for this particular RFC, but still worth discussing in case they influence any immediate decisions in the name of forwards-compatibility.
+- Parsing is simplest if `reads` clauses are allowed on all `method`-like definitions, including the various flavours of lemmas. Allowing `reads` clauses on lemmas seems harmless, but are there downsides?
+- Are there other potential use cases for this feature worth mentioning, aside from external thread-safety?
+- Is there a good term for a `method` that does not read or modify any shared state? "Pure" is not a good choice in this context, since it usually implies a procedure that always produces the same value when run on the same input (i.e. a `function` in Dafny) and that has no side effects (which a `method` could still have through calls to external code).
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-*** Point to adding concurrency support to Dafny itself, so it's not necessary
-to have shared mutable state in native code. ***
+It could be useful to have a utility to infer and add `reads` clauses to all the methods declared in a Dafny codebase, to reduce the burden of ensuring existing code is externally thread-safe.
 
-TODO:
-
-Think about what the natural extension and evolution of your proposal would
-be and how it would affect the language and project as a whole in a holistic
-way. Try to use this section as a tool to more fully consider all possible
-interactions with the project and language in your proposal.
-Also consider how the this all fits into the roadmap for the project
-and of the relevant sub-team.
-
-This is also a good place to "dump ideas", if they are out of scope for the
-RFC you are writing but otherwise related.
-
-If you have tried and cannot think of any future possibilities,
-you may simply state that you cannot think of anything.
-
-Note that having something written down in the future-possibilities section
-is not a reason to accept the current or a future RFC; such notes should be
-in the section on motivation or rationale in this or subsequent RFCs.
-The section merely provides additional information.
+Ideas for how Dafny should tackle asynchronous or concurrent execution in general are out of scope for this particular RFC, but still worth discussing in case they influence any immediate decisions in the name of forwards-compatibility.
