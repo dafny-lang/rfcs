@@ -8,6 +8,8 @@ method {:extern} Fibonacci(n: nat) returns (r: nat)
   return x;
 }
 
+// Attempting to memoize the fibonacci function with a shared cache.
+
 class Box<T> {
   var value: T
   constructor(value: T) {
@@ -15,7 +17,6 @@ class Box<T> {
   }
 }
 
-// Attempting to memoize the fibonacci function with a shared cache.
 method {:extern} UnsafeMemoizedFibonacci(n: int, cacheBox: Box<map<nat, nat>>) returns (r: nat)
   reads {}
 {
