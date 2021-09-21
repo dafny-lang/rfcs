@@ -64,7 +64,7 @@ class Box<T> {
   }
 }
 
-method {:extern} UnsafeMemoizedFibonacci(n: int, cacheBox: Box<map<nat, nat>>) returns (r: nat)
+method {:extern} UnsafeMemoizedFibonacci(n: nat, cacheBox: Box<map<nat, nat>>) returns (r: nat)
   reads {}
 {
   var cache := cacheBox.value; // Error: insufficient reads clause to read field
@@ -75,22 +75,41 @@ method {:extern} UnsafeMemoizedFibonacci(n: int, cacheBox: Box<map<nat, nat>>) r
     cacheBox.value := cache[n := r]; // Error: assignment may update an object not in the enclosing context's modifies clause
   }
 }
-```
 
-
-
-```dafny
-// TODO: example of permitted thread-local mutable state. Perhaps change to a polynomial datatype
-// which would like to use a stateful Fold-er type thingy over a sequence?
-
+// TODO: example of permitted thread-local mutable state - creating new objects and modifying them IS allowed.
 ```
 
 This is most effective when the person providing the specification is different from the person implementing it. It ensures that the implementation cannot interact with shared state by accident, especially deep within shared libraries that are perfectly safe to use in a single-threaded context.
 
-When shared state is necessary, it must be implemented externally in native code, which case native facilities for synchronizing access mutable state.
+When shared state is necessary, it must be implemented externally in native code, where native facilities for synchronizing access mutable state can be used.
 
 ```dafny
-TODO
+datatype Option<T> = Some(value: T) | None
+
+// Wrapper around a built-in concurrent data structure, such as
+// ConcurrentHashMap<K, V> in Java.
+//
+// Note the lack of a ghost variable to track the state of the map,
+// which intentionally puts the mutable state outside of the Dafny-verified model.
+// These methods instead appear to have non-deterministic behavior to Dafny, which accurately
+// represents the fact that it cannot assume anything about state that might be changed by
+// other threads.
+class {:extern} ExternalMutableMap<K, V> {
+  method {:extern} Get(k: V) returns (v: Option<V>)
+  method {:extern} Put(k: K, v: V)
+}
+
+method {:extern} SafeMemoizedFibonacci(n: int, cache: ExternalMutableMap<nat, nat>) returns (r: nat)
+  reads {}
+{
+  var cached := cache.Get(n);
+  if cached.Some? {
+    r := cached.value;
+  } else {
+    r := Fibonacci(n);
+    cache.Put(n, r);
+  }
+}
 ```
 
 The wiki page on [Modelling External State Correctly](https://github.com/dafny-lang/dafny/wiki/Modeling-External-State-Correctly) would be updated to recommend that methods exposed to concurrent native code should include `reads {}` and omit any `modifies` clauses.
