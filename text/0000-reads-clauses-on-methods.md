@@ -44,39 +44,50 @@ This proposal does not aim to add concurrency primitives to Dafny, or even propo
 In most Dafny code, you will not have to specify a reads clause on any methods, as they are permitted to read any mutable state by default. In some cases the specification for a method needs to be more precise, however. In particular, invoking a compiled method from external, native code in a concurrent environment is much more likely to be safe if the method does not read or write any shared mutable state. It will now be possible to specify this requirement by using `reads` clauses on methods as well as functions. For example:
 
 ```dafny
-method {:extern} Fibonacci(n: nat) returns (r: nat)
+
+class FibonacciMemoizer {
+  var cache: map<nat, nat>
+  constructor() reads {} {
+    cache := map[];
+  }
+  method Get(n: nat) returns (r: nat) 
+    reads this
+    modifies this
+  {
+    if n <= 2 {
+      return 1;
+    }
+    if n in cache {
+      r := cache[n];
+    } else {
+      var oneBefore := Get(n - 1);
+      var twoBefore := Get(n - 2);
+      r := oneBefore + twoBefore;
+      cache := cache[n := r];
+    }
+  }
+}
+
+// Sharing a memoizer instance between threads is not allowed.
+method {:extern} UnsafeFibonacci(n: nat, memoizer: FibonacciMemoizer) returns (r: nat)
   reads {}
-  // modifies {} -- This is the default so it can be omitted
 {
-  var x, y := 0, 1;
-  for i := 0 to n {
-    x, y := y, x + y;
-  }
-  return x;
+  r := memoizer.Get(n);   // Error: insufficient reads clause to invoke method
+                          // Error: call may violate context's modifies clause
 }
 
-// Attempting to memoize the fibonacci function with a shared cache.
-
-class Box<T> {
-  var value: T
-  constructor(value: T) {
-    this.value := value;
-  }
-}
-
-method {:extern} UnsafeMemoizedFibonacci(n: nat, cacheBox: Box<map<nat, nat>>) returns (r: nat)
+// It IS allowed, though, to manipulate mutable state that is freshly
+// allocated by a single thread. This does not violate the reads or modifies clauses.
+method {:extern} SafeFirstNFibonaccis(n: nat) returns (rs: seq<nat>)
   reads {}
 {
-  var cache := cacheBox.value; // Error: insufficient reads clause to read field
-  if n in cache.Keys { 
-    r := cache[n];
-  } else {
-    r := Fibonacci(n);
-    cacheBox.value := cache[n := r]; // Error: assignment may update an object not in the enclosing context's modifies clause
+  var memoizer := new FibonacciMemoizer();
+  rs := [];
+  for i := 1 to n + 1 {
+    var r := memoizer.Get(i);
+    rs := rs + [r];
   }
 }
-
-// TODO: example of permitted thread-local mutable state - creating new objects and modifying them IS allowed.
 ```
 
 This is most effective when the person providing the specification is different from the person implementing it. It ensures that the implementation cannot interact with shared state by accident, especially deep within shared libraries that are perfectly safe to use in a single-threaded context.
@@ -86,7 +97,8 @@ When shared state is necessary, it must be implemented externally in native code
 ```dafny
 datatype Option<T> = Some(value: T) | None
 
-// Wrapper around a built-in concurrent data structure, such as
+//
+// Wrapper around a concurrent data structure, such as
 // ConcurrentHashMap<K, V> in Java.
 //
 // Note the lack of a ghost variable to track the state of the map,
@@ -94,21 +106,40 @@ datatype Option<T> = Some(value: T) | None
 // These methods instead appear to have non-deterministic behavior to Dafny, which accurately
 // represents the fact that it cannot assume anything about state that might be changed by
 // other threads.
+//
 class {:extern} ExternalMutableMap<K, V> {
-  method {:extern} Get(k: V) returns (v: Option<V>)
-  method {:extern} Put(k: K, v: V)
+  constructor {:extern} () reads {}
+  method {:extern} Put(k: K, v: V) reads {}
+  method {:extern} Get(k: V) returns (v: Option<V>) reads {}
 }
 
-method {:extern} SafeMemoizedFibonacci(n: int, cache: ExternalMutableMap<nat, nat>) returns (r: nat)
+class FibonacciMemoizer {
+  const cache: ExternalMutableMap<nat, nat>
+  constructor() reads {} {
+    cache := new ExternalMutableMap();
+  }
+  method Get(n: nat) returns (r: nat)
+    reads {}
+  {
+    if n <= 2 {
+      return 1;
+    }
+    var cached := cache.Get(n);
+    if cached.Some? {
+      r := cached.value;
+    } else {
+      var oneBefore := Get(n - 1);
+      var twoBefore := Get(n - 2);
+      r := oneBefore + twoBefore;
+      cache.Put(n, r);
+    }
+  }
+}
+
+method {:extern} SafeFibonacci(n: nat, memoizer: FibonacciMemoizer) returns (r: nat)
   reads {}
 {
-  var cached := cache.Get(n);
-  if cached.Some? {
-    r := cached.value;
-  } else {
-    r := Fibonacci(n);
-    cache.Put(n, r);
-  }
+  r := memoizer.Get(n);
 }
 ```
 

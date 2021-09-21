@@ -1,35 +1,44 @@
-method {:extern} Fibonacci(n: nat) returns (r: nat)
-  reads {}
-  // modifies {} -- This is the default so it can be omitted
-{
-  var x, y := 0, 1;
-  for i := 0 to n {
-    x, y := y, x + y;
+
+class FibonacciMemoizer {
+  var cache: map<nat, nat>
+  constructor() reads {} {
+    cache := map[];
   }
-  return x;
-}
-
-// Attempting to memoize the fibonacci function with a shared cache.
-
-class Box<T> {
-  var value: T
-  constructor(value: T)
-    reads {}
+  method Get(n: nat) returns (r: nat) 
+    reads this
+    modifies this
   {
-    this.value := value;
+    if n <= 2 {
+      return 1;
+    }
+    if n in cache {
+      r := cache[n];
+    } else {
+      var oneBefore := Get(n - 1);
+      var twoBefore := Get(n - 2);
+      r := oneBefore + twoBefore;
+      cache := cache[n := r];
+    }
   }
 }
 
-method {:extern} UnsafeMemoizedFibonacci(n: nat, cacheBox: Box<map<nat, nat>>) returns (r: nat)
+// Sharing a memoizer instance between threads is not allowed.
+method {:extern} UnsafeFibonacci(n: nat, memoizer: FibonacciMemoizer) returns (r: nat)
   reads {}
 {
-  var cache := cacheBox.value; // Error: insufficient reads clause to read field
-  if n in cache.Keys { 
-    r := cache[n];
-  } else {
-    r := Fibonacci(n);
-    cacheBox.value := cache[n := r]; // Error: assignment may update an object not in the enclosing context's modifies clause
-  }
+  r := memoizer.Get(n);   // Error: insufficient reads clause to invoke method
+                          // Error: call may violate context's modifies clause
 }
 
-// TODO: example of permitted thread-local mutable state - creating new objects and modifying them IS allowed.
+// It IS allowed, though, to manipulate mutable state that is freshly
+// allocated by a single thread. This does not violate the reads or modifies clauses.
+method {:extern} SafeFirstNFibonaccis(n: nat) returns (rs: seq<nat>)
+  reads {}
+{
+  var memoizer := new FibonacciMemoizer();
+  rs := [];
+  for i := 1 to n + 1 {
+    var r := memoizer.Get(i);
+    rs := rs + [r];
+  }
+}
