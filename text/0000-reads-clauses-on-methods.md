@@ -36,7 +36,7 @@ class Counter {
 
 If this class is compiled to C#, for example, and its instances are shared between multiple threads, its verified properties are no longer true. If two threads both invoke `Increment` on a single counter, the effect could easily be to only increment `x` once, since reading and writing `x` does not occur atomically. Even the post-condition on `Get` is no longer valid, because the value of `x` could change in-between reading its value and returning from the compiled body.
 
-This proposal does not aim to add concurrency primitives to Dafny, or even propose any particular choice of paradigm for asynchronous or concurrent execution. Instead, it supports verifying that a particular method is safe to use in a concurrent environment, by verifying that it does not operate on any mutable state unsafely.
+This proposal does not aim to add concurrency primitives to Dafny, or even propose any particular choice of paradigm for asynchronous or concurrent execution. Instead, it supports verifying that a particular method is safe to use in a concurrent environment, by verifying that it does not operate on any shared mutable state.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
