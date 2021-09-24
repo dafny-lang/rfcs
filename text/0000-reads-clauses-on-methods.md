@@ -41,7 +41,22 @@ This proposal does not aim to add concurrency primitives to Dafny, or even propo
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-In most Dafny code, you will not have to specify a reads clause on any methods, as they are permitted to read any mutable state by default. In some cases the specification for a method needs to be more precise, however. In particular, invoking a compiled method from external, native code in a concurrent environment is much more likely to be safe if the method does not read or write any shared mutable state. It will now be possible to specify this requirement by using `reads` clauses on methods as well as functions. For example:
+In most Dafny code, you will not have to specify a reads clause on any methods, as they are permitted to read any mutable state by default. In some cases the specification for a method needs to be more precise, however. In particular, invoking a compiled method from external, native code in a concurrent environment is much more likely to be safe if the method does not read or write any shared mutable state. It will now be possible to specify this requirement by using `reads` clauses on methods as well as functions.
+
+Let's consider a case where we want to provide some Dafny-implemented functionality to external code. Let's use our favorite example, the Fibonacci sequence. Assume that this needs to work in at least one language with threads and shared memory, such as C# or Java. Knowing that is a requirement, one way to meet it is to ensure that the Dafny code does not read or write any shared mutable state:
+
+```dafny
+// Here {:extern} is used to allow external code to invoke this method,
+// rather than indicate it will be externally implemented.
+method {:extern} Fibonacci(n: nat) returns (r: nat)
+  reads {}
+  // modifies {} is the default so it can be omitted 
+{
+  ...
+}
+```
+
+Suppose you want to add some caching as we implement this, since the results of one call can be reused by others. We need to have clients pass in the cache since Dafny offers no way to store it as global state (which is frankly a good thing). Our first attempt leads to a verification error, however, which saves us from accidentally introducing a race condition!
 
 ```dafny
 
@@ -51,7 +66,6 @@ class FibonacciMemoizer {
     cache := map[];
   }
   method Get(n: nat) returns (r: nat) 
-    reads this
     modifies this
   {
     if n <= 2 {
@@ -63,22 +77,27 @@ class FibonacciMemoizer {
       var oneBefore := Get(n - 1);
       var twoBefore := Get(n - 2);
       r := oneBefore + twoBefore;
+      // This line introduces a race condition in multi-threaded target languages.
+      // Updating two different entries concurrently can lead to one of them being dropped!
       cache := cache[n := r];
     }
   }
 }
 
-// Sharing a memoizer instance between threads is not allowed.
-method {:extern} UnsafeFibonacci(n: nat, memoizer: FibonacciMemoizer) returns (r: nat)
+method {:extern} Fibonacci(n: nat, memoizer: FibonacciMemoizer) returns (r: nat)
   reads {}
 {
   r := memoizer.Get(n);   // Error: insufficient reads clause to invoke method
                           // Error: call may violate context's modifies clause
 }
+```
 
-// It IS allowed, though, to manipulate mutable state that is freshly
-// allocated by a single thread. This does not violate the reads or modifies clauses.
-method {:extern} SafeFirstNFibonaccis(n: nat) returns (rs: seq<nat>)
+Note that this technique is most effective when the person providing the specification is different from the person implementing it. It ensures that the implementation cannot interact with shared state by accident, especially deep within shared libraries that are perfectly safe to use in a single-threaded context. The wiki page on [Modelling External State Correctly](https://github.com/dafny-lang/dafny/wiki/Modeling-External-State-Correctly) would be updated to recommend that methods exposed to concurrent native code should include `reads {}` and omit any `modifies` clauses.
+
+The nature of frame specifications in Dafny makes `reads {}` less restrictive than it might appear. First of all, it only specifies that a method reads no *mutable* fields. `const` declarations on classes are still fair game. It also only forbids reading *existing* mutable state. It is legal to allocate new mutable objects and modify their fields, either inline or by calling other methods. This means that creating and sharing a cache between multiple calculations within a single externally-exposed method is permitted:
+
+```dafny
+method {:extern} FirstNFibonaccis(n: nat) returns (rs: seq<nat>)
   reads {}
 {
   var memoizer := new FibonacciMemoizer();
@@ -90,9 +109,7 @@ method {:extern} SafeFirstNFibonaccis(n: nat) returns (rs: seq<nat>)
 }
 ```
 
-This is most effective when the person providing the specification is different from the person implementing it. It ensures that the implementation cannot interact with shared state by accident, especially deep within shared libraries that are perfectly safe to use in a single-threaded context.
-
-When shared state is necessary, it must be implemented externally in native code, where native facilities for synchronizing access mutable state can be used.
+When sharing state externally really is necessary, it must be implemented externally in native code, where native facilities for synchronizing access to mutable state can be used. Therefore the solution is to push the caching logic into the target language instead:
 
 ```dafny
 datatype Option<T> = Some(value: T) | None
@@ -136,14 +153,12 @@ class FibonacciMemoizer {
   }
 }
 
-method {:extern} SafeFibonacci(n: nat, memoizer: FibonacciMemoizer) returns (r: nat)
+method {:extern} Fibonacci(n: nat, memoizer: FibonacciMemoizer) returns (r: nat)
   reads {}
 {
-  r := memoizer.Get(n);
+  r := memoizer.Get(n);  // This version verifies
 }
 ```
-
-The wiki page on [Modelling External State Correctly](https://github.com/dafny-lang/dafny/wiki/Modeling-External-State-Correctly) would be updated to recommend that methods exposed to concurrent native code should include `reads {}` and omit any `modifies` clauses.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -178,7 +193,7 @@ We could make the intentional decision that Dafny currently does not support thi
 
 If there is intentional use of shared mutable state in Dafny code that needs to be externally thread-safe, currently the only solution is to move this logic into external code and make use of synchronization features in the target language(s). This is unfortunate when a single `synchronized` block would hypothetically address a tiny race condition.
 
-Besides the fact that adding full concurrent support to Dafny will be a large and expensive undertaking, we need to be very careful about what paradigm we choose. Implementing `synchronized` blocks would imply that Dafny uses a shared memory model, but it's very possible something like message passing would make specifications eaiser to write and less costly to verify. Selecting or designing a paradigm for Dafny is particularly challenging given it has to be compilable to multiple target languages: a shared memory model compiles naturally to C# or Java, but much less so to Go. 
+Besides the fact that adding full concurrent support to Dafny will be a large and expensive undertaking, we need to be very careful about what paradigm we choose. Implementing `synchronized` blocks would imply that Dafny uses a shared memory model, but it's very possible something like message passing would make specifications easier to write and less costly to verify. Selecting or designing a paradigm for Dafny is particularly challenging given it has to be compilable to multiple target languages: a shared memory model compiles naturally to C# or Java, but much less so to Go. 
 
 # Prior art
 [prior-art]: #prior-art
