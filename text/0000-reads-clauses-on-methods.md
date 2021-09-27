@@ -65,7 +65,8 @@ class FibonacciMemoizer {
   constructor() reads {} {
     cache := map[];
   }
-  method Get(n: nat) returns (r: nat) 
+  method Get(n: nat) returns (r: nat)
+    reads this
     modifies this
   {
     if n <= 2 {
