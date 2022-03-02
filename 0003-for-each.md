@@ -13,53 +13,99 @@ One paragraph explanation of the feature.
 
 * Why does Dafny need enumerators at all? Can't seq<T> do everything?
   * External code, especially I/O
-  * Data structures that are not efficiently random access, strings
+  * Data structures that are not efficiently random access (e.g. strings)
   * Accessibility for engineers less accustomed to functional programming. Dafny intentionally supports imperative programming
   * Easier verification of loops in general
-
-Why are we doing this? What use cases does it support? What is the expected outcome?
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-* [I]Enumerable type characteristic
+* [I]Collection type characteristic
   * "Enumerator() where the single return value is an [I]Enumerator"
-    * May be baked-in for things like collections
+    * Baked-in for built-in collection types
   * Having this separate from Enumerator especially effective for Dafny, because
-    higher-order operations on enumerables can be functions, unlike enumerators
+    higher-order operations on collections can be functions, unlike enumerators
+  * Even `Option<T>` can be a collection!
+    * `match o case Some(v) => { print v; }` => `foreach v in o { print v }`
+    * Other Wrappers could be too, but more questionable
 * [I]Enumerator type characteristic
-  * "Next() where the first return value is failure-compatible"
+  * "Next() with a single return value"
   * (Enumerator only) "Decreases() where the return values are usable in decreases clauses"
-* Built-in Enumerable implementations, with Enumerators baked into runtime code
-  * set<T> extends Enumerable<T>
+* Built-in Collection implementations, with Enumerators baked into runtime code
+  * set<T> extends Collection<T>
     * DON'T want to customize by ordering, better to have users collect into an array and sort explicitly
-  * multiset<T> extends Enumerable<T> (or Enumerable2<T, nat>?)
-    * Perhaps offer both, or a convertor to `map<T, nat>`? Just `map(myMultiset)` is unambiguous.
-  * seq<T> extends Enumerable<T>
+  * multiset<T> extends Collection<T>
+    * Also convertor to `map<T, nat>`, so you can enumerate multiplicity pairs instead: Just `map(myMultiset)` is unambiguous.
+  * seq<T> extends Collection<T>
     * Only case where ordering is guaranteed
-  * map<K, V> extends Enumerable<(K, V)> (or Enumerable2<K, V>?)
-  * (future) string extends Enumerable<char>
-  * `iset` and `imap` should work too - type characteristics seem to line up with mathematical definition
+  * map<K, V>.Items/Keys/Values enumerable through the above
+  * (future) string extends Collection<char>
+  * `iset` and `imap` should work as ICollections too - type characteristics seem to line up with mathematical definition
   * enumerator for all values of a given type?? Can you always say `iset x: T | true`?
+* Add ranges as collections as well?
+  * `foreach x in lo..hi { ... }` equivalent to `for x := lo to hi { ... }`
+  * Nice for sequence comprehensions as well: `seq i in 0..|s| :: s[i] + 1`
 * Built-in expression for collecting to a sequence? Potentially much easier to implement internally
+  * See alternate `seq` comprehension syntax below
 * Built-in expression for casting an `iterator` to an enumerable/enumerator?
   * Could have all existing iterators now have a `Next()` method as well.
   * Can't infer `Decreases()` though :(
+    * Might be possible to attach `Decreases` extrinsically though!
 * Standard library implementations and combinators
   * Will likely assume tighter definitions of type characteristics that fit into traits
   * Trait limitations may improve over time!
-* TODO: How to provide "with index" as nicely as possible?
-  * Two decent options, `foreach` allows either:
-    * `foreach (x, index) in WithIndex(e) { ... }` (`Enumerable<(T, nat)>`)
-    * `foreach x, index in WithIndex(e) { ... }` (`Enumerable2<T, nat>`)
-  * Don't see the need for backing this into the feature
+* For each with index:
+  * `foreach (x, index) in WithIndex(e) { ... }`
+  * Don't see the need for baking this into the feature
 * `foreach` loop:
   * almost like a compiled `forall`
+    * Key difference is executing the body once for each value in sequence, instead of all simultaenously
+    * By default needs to be finite, whereas forall 
   * Three options for termination:
     * No `decreases` ==> default to `decreases iter.Decreases()`
     * `decreases *` ==> supports `IEnumerable<T>`
     * other `decreases` ==> not touched
   * No way to explicitly reference `iter` in a manual `decreases` clause, but if you want that write your own `[I]Enumerable<T>` wrapper.
+  * How to refer to values already enumerated?
+    * We don't like the `elements` trick `iterators` pull (but this would be consistent)
+    * Syntax to bind values enumerated so far? No precedent for this in other languages AFAICT
+    * Almost want additional specification clauses, similar to `yield ensures`, possibly leveraging `old`?
+    * Instead: `foreach (x, xs) in WithEnumerated(c)`
+      * This will be very common since you can't prove semantics (as opposed to just safety) without it
+      * Making it not strictly necessary helps new users get started, as long as we document the pattern above well
+      * TODO: need to try an actual proof with this
+  * Alternate sequence comprehension
+    * `seq x | x in c && x % 2 == 0 :: Cell(x)` - filter_map!
+      * Getting to be like Python!
+      * Common: `seq x in c | x.Some? :: x.value` - otherwise have to do `Seq.Map(x requires x.Some? => x.value, Seq.Filter(x => x.Some?, c))`
+      * `c` must be a "sized" enumerable (?) - probably means defining `.Size()` or something
+        * Really only as an optimization
+    * Array comprehension? `new int[] from c`
+      * Only way I can think of to avoid needing `T(0)`
+      * Doesn't generalize to multi-dimensional arrays though
+    * Need a `function-by-method` kind of verification that it's legal to have an expression like this implemented with objects and temporary state
+      * Should be valid as long as semantics are tied to effects on `e.enumerated`
+    * Allows easy conversion of set to sequence: `seq x | x in mySet`
+    * Could replace existing index-based comprehension too:
+      * `seq i in Range(0, 10) :: f(i)` or even `seq i in 0..10 :: f(i)`
+* Should there also be a `foreach` expression?
+  * That's more or less what the alternate seq comprehension is
+  * Should it be `for x in c ...` instead?
+    * Probably not, more consistent with other comprehensions to start with the type kind keyword
+  * Handling `in` in general should allow `forall` expressions to do what we'd want
+* `LHS in RHS` becomes another standard piece of syntax similar to QuantifierDomain, in both `foreach` and `seq` comprehensions
+  * Better to use a different keyword to indicate ordering?
+    * Ordering already indirectly observable at runtime, since you can compile `:|` and observe how long it takes to find a solution :)
+  * Support `x in c` expression for ANY finite collection c? Always computable, but usually not efficient unless specialized!
+    * Already true for sequences, so already something to be cautious of
+  * `if x :| x in c { ... }`?
+  * Technically can support: `foreach b: bool { print b; }`
+  * Technically can support: `foreach x: T | P(x) { print b; }`
+    * Describing the ordering just gets interesting :)
+    * What is the ordering here? `foreach x | x in C1 && x in C2 { print x; }`
+      * The good news is you can try to prove whatever you think it is and find out :)
+
+
 
   
 ```dafny
@@ -81,24 +127,22 @@ foreach s in iset x: nat | true
   print "Hello ", s, "!\n";
 }
 
-Issue: there's no implication of predictible ordering! There's the "below" ordering
-but that doesn't necessarily enduce an enumeration.
-
 method ToArray<T(0)>(e: SizedEnumerable<T>) returns (result: array<T>)
   ...
 {
   new T[e.count];
-  foreach element, index in WithIndex(e)
-    invariant result[0..index] == elements // Best way to refer to values looped over so far?
+  foreach (element, index, elements) in WithIndexAndEnumerated(e)
+    invariant result[0..index] == elements
   {
     result[index] := element.value;
   }
 ```
 
 ```dafny
-  for <LHS> in <E> 
+  foreach LHS in <E> 
     invariant <I>
     modifies <M>
+    decreases <D>
   {
     <fBody>
   }
@@ -107,27 +151,48 @@ method ToArray<T(0)>(e: SizedEnumerable<T>) returns (result: array<T>)
 
   var __e := <E>.Enumerator();
   while __e.HasNext() 
-    invariant __e.Valid() && fresh(e.Repr)
-    decreases __e.Decreases()
+    invariant __e.Valid() && fresh(__e.Repr)
+    decreases __e.Decreases() // If no explicit decreases
 
     invariant <I>
     modifies <M>
+    decreases <D>
   {
-    var __element := __e.Next();  // Method call
-    // Allow case pattern destructuring 
-    var <LHS> := __element;       // Variable declaration
+    var __next := __e.Next();  // Method call
+    if __next.IsFailure() {
+      break;
+    }
+    var LHS := __next.Extract(); // Allows destructuring. 
+                                 // Assumes Extract is a function, can we lock that down? Do we have to?
 
     <fBody>
   }
 
+  // Implicit trait probably not actually in stdlib.
   trait Enumerable<T> {
-    // TODO: How to attach extra invariants?
-    // I don't think we want to attach a ghost var
-    // here of the elements that will be enumerated,
-    // but some use cases will definitely want that.
-    method Enumerator returns (e: Enumerator<T>)
+
+    // TODO: Don't want to flat-out require "contents: seq<T>"
+    // because we want to allow it to be expensive or complicated
+    // to calculate or track in ghost state, or even non-deterministic.
+    // But we do want to assert the connection between the contents
+    // of this value and what will be enumerated by the enumerator somehow.
+    // Could make it a function instead, but still doesn't avoid having
+    // to define a body if you're compiling your Dafny code.
+    // In a way the Enumerator method spec IS the spec of your contents.
+    // We might need an additional predicate of some kind.
+
+    // Can attach properties of what is to be enumerated
+    // with specializations of the trait.
+    method Enumerator() returns (e: Enumerator<T>)
       ensures e.Valid()
       ensures fresh(e.Repr)
+
+    // Default, O(n) implementation
+    // TODO: Orthogonal feature of default implementations.
+    // In this case the spec can be used as the default implementation!
+    function method Contains(t: T) {
+      exists x in this :: x != t
+    }
   }
 ```
 
@@ -165,9 +230,15 @@ Why should we *not* do this?
 [rationale-and-alternatives]: #rationale-and-alternatives
 
 * Could overload `for LHS in RHS` so we didn't need another keyword
+  * Doesn't read quite as well since the RHS won't name individual values like `0 to 10` does
 * Could just define `foreach` for built-in collection types
+* Could extend `forall` statements to support compilation as well
+  * Probably only support specific syntax
+  * Semantics don't match - `forall` has simultaneous semantics, allowing things like swaps (?), but we need sequential execution
+  * But parallel evaluation of `forall`s could be really nice in the future! Prove disjointness and therefore safety.
 * Could avoid assuming that Enumerators modify the heap
   * Alternative of `Next(): (t, e')`, where `e' == e` can often work if it's an object
+  * Doesn't seem worth it - a single object allocation for a tree of datatypes is cheap
 * Could use an alternative API for Enumerator
   * (multiple options to cover)
   * Wacky option:
@@ -202,7 +273,10 @@ Note that while precedent set by other languages is some motivation, it does not
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
+* How valuable is it to support multiple enumerated values, as opposed to assuming tuple results instead?
 * How to support concurrency in the future? Anything cheap we can do to be more forward-compatible?
+* `Repr` hasn't actually been added to the stdlib yet, and iterators define `_reads`, `_modifies`, etc.
+  instead. What do for enumera[ble|tor]s?
 
 - What parts of the design do you expect to resolve through the RFC process before this gets merged?
 - What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
