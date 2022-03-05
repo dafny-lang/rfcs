@@ -20,6 +20,46 @@ One paragraph explanation of the feature.
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
+## Enumerable and IEnumerable
+
+  * Must define `Enumerator() returns Enumerator<T>`
+  * May define `Contains(t)`, which is used for `x in c` expressions
+    * Implies `T(0)`
+    * Default is `exists x | x in c :: x == t`
+  * May define `Size()` to support `|c|`?
+    * Default is `|seq x in c|`
+  * All enumerables are collections, and all finite collections are enumerable, but some infinite collections are not (only defining `in`)
+
+## Enumerator and IEnumerator
+
+  * Must define `Next()`
+  * For `Enumerator`
+    * `T` must be failure-compatible
+    * Must define `Decreases()`
+
+## foreach Loops
+
+  * `foreach <QuantifierDomain> <LoopSpec> <BlockStmt>`
+  * Very similar to forall statements, but executes block for one element at a time in order
+  * Ordering determined by domain:
+    * By far the most common will be `x in c`, and usually `c` will be a `seq`
+    * Define rules like associativity that determines ordering. Mostly left overrides right.
+
+## Sequence comprehensions
+
+  * `seq <QuantifierDomain> [ :: <Term> ]`
+
+## Short-form quantifier domains
+
+  * `x in c` ==> `x | x in c`
+  * `(x, y) in myMap.Items` ==> `x, y | (x, y) in myMap.Items`
+  * In general: `<Expr>` ==> `<bound vars in Expr> | <Expr>`
+  * Can also allow omitting the range expression: `x: T` ==> `x: T | true`
+    * Useful for subset types: define something like `type Index = x: int | 0 <= index < 10`, and then do `foreach i: Index { ... }`
+  * Applies to comprehensions (seq, set, map), quantifier expressions (forall, exists)
+
+## Notes
+
 * [I]Collection type characteristic
   * "Enumerator() where the single return value is an [I]Enumerator"
     * Baked-in for built-in collection types
@@ -51,21 +91,25 @@ One paragraph explanation of the feature.
   * Could have all existing iterators now have a `Next()` method as well.
   * Can't infer `Decreases()` though :(
     * Might be possible to attach `Decreases` extrinsically though!
+  * Might work better to cast an iterator value as an enumerator of itself:
+    * `foreach i in seq(MyIterator) { print i.key, i.value; }`
+  * Might be just too much of a stretch, iterators need specific specs to work as enumerators, just make users do it themselves
 * Standard library implementations and combinators
   * Will likely assume tighter definitions of type characteristics that fit into traits
   * Trait limitations may improve over time!
 * For each with index:
   * `foreach (x, index) in WithIndex(e) { ... }`
   * Don't see the need for baking this into the feature
+  * OR: `foreach x, index | 0 <= index < |e| && x == e[index]`
 * `foreach` loop:
   * almost like a compiled `forall`
     * Key difference is executing the body once for each value in sequence, instead of all simultaenously
-    * By default needs to be finite, whereas forall 
+    * By default needs to be finite, whereas only the parallel-assignment kind of forall statement needs to be
   * Three options for termination:
     * No `decreases` ==> default to `decreases iter.Decreases()`
     * `decreases *` ==> supports `IEnumerable<T>`
     * other `decreases` ==> not touched
-  * No way to explicitly reference `iter` in a manual `decreases` clause, but if you want that write your own `[I]Enumerable<T>` wrapper.
+    * No way to explicitly reference `iter` in a manual `decreases` clause, but if you want that write your own `[I]Enumerable<T>` wrapper.
   * How to refer to values already enumerated?
     * We don't like the `elements` trick `iterators` pull (but this would be consistent)
     * Syntax to bind values enumerated so far? No precedent for this in other languages AFAICT
@@ -88,6 +132,10 @@ One paragraph explanation of the feature.
     * Allows easy conversion of set to sequence: `seq x | x in mySet`
     * Could replace existing index-based comprehension too:
       * `seq i in Range(0, 10) :: f(i)` or even `seq i in 0..10 :: f(i)`
+    * Semantic equivalence:
+      * `seq x: T | x in c && P(x) :: Q(x)` == `Collections.Map(x => Q(x), Collections.Filter(x => P(x), c))`
+        * if the domain expression does not include a `x in c`, then `c` defaults to `set x: T | true`, and may fail if `T` is not finite
+      * Need to generalize this to multiple bound variables
 * Should there also be a `foreach` expression?
   * That's more or less what the alternate seq comprehension is
   * Should it be `for x in c ...` instead?
@@ -137,6 +185,8 @@ method ToArray<T(0)>(e: SizedEnumerable<T>) returns (result: array<T>)
     result[index] := element.value;
   }
 ```
+
+* `foreach <LHS> in <E> { ... }` is just a short-form for `foreach <vars bound in LHS> | <LHS> in <E> { ... }`
 
 ```dafny
   foreach LHS in <E> 
