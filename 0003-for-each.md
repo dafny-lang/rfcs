@@ -277,12 +277,17 @@ for a quantification.
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
+As mentioned in the guide-level explanation, `foreach` loops and sequence comprehensions are both able to
+borrow concepts and implementation substantially from other features. Parsing, resolving, verifying, and compiling
+quantifier domains is already a mature aspect of the Dafny implementation. The most significant implementation burden
+is ensuring that enumeration ordering is deterministic.
+
 TODO:
 
   * Verification encoding
-    * foreach loops mostly desugared into ???
+    * foreach loops most likely just desugared into existing loop translation
     * sequence comprehensions mapped to Seq.Build calls, but may need more axioms
-  * At least a sketch of domain enumeration ordering
+  * (At least a sketch of domain enumeration ordering)
     * Define rules like associativity that determines ordering. Mostly left overrides right.
     * `x in A && P(x)` -> `A.Enumerator().Filter(P)`
       * Sort-of consistent with multiset "*" intersection but not quite
@@ -296,65 +301,94 @@ TODO:
 # Drawbacks
 [drawbacks]: #drawbacks
 
-* New concept of enumeration ordering, extra implementation effort for new builtin collection types
-* Potential confusion over enumeration ordering rules
-* Potential subtle bugs in runtime implementations if `set` ordering isn't determinisitic
-  * Already implicitly tested by asserting the exact output when printing sets
+The primary drawback to this proposal is the burden of adding the new concept of enumeration ordering. 
+This means extra cognitive load for Dafny users, extra implementation effort for any new builtin collection types, 
+and additional testing to ensure that all supported quantification domains are deterministically enumerable.
 
+It can be argued that if any compiled Dafny program uses existing features that depend on domain enumeration,
+such as `exists` expressions or `:|` statements, its runtime behavior already depends heavily on how this domain
+searching is implemented. The compiler only enforces that such domains are finite and enumerable, but an inefficient
+choice can lead to the search for a matching value taking orders of magnitude more time than expected.
+Therefore we should already be documenting this aspect of Dafny semantics and implementation better anyway.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
+*** TODO *** 
+
 I propose that leveraging the existing mathematical concepts and syntax is very "Dafny like".
 
-* Matching `forall` statement advantages:
+* Matching `forall` statement syntax/semantics (partially) advantages:
   * If someone starts with a forall and then hits the limitation, can easily switch to `foreach`
   * Natural parallel programming paradigm in the future (if `forall` is made more powerful): `foreach` for sequential, `forall` for parallel
 
+Alternatives:
 
+* Could only support `foreach x in c`: only direct collections, one bound value (even if we allow destructuring as in `foreach (k, v) in myMap`)
 * Could overload `for LHS in RHS` so we didn't need another keyword
   * Doesn't read quite as well since the RHS won't name individual values like `0 to 10` does
 * Could extend `forall` statements to support compilation as well
   * Probably only support specific syntax
   * Semantics don't match - `forall` has simultaneous semantics, allowing things like swaps (?), but we need sequential execution
-  * But parallel evaluation of `forall`s could be really nice in the future! Prove disjointness and therefore safety.
-
-
 
 # Prior art
 [prior-art]: #prior-art
 
+*** TODO ***
+
 These features are largely and obviously inspired by the existing features in Dafny for quantification of one or more variables.
 
-Sequence comprehensions bear a strong resemblance to list comprehensions in Python. *** TODO ***
+Sequence comprehensions bear a strong resemblance to list comprehensions in Python. 
 
-JMatch!
+JMatch! https://www.cs.cornell.edu/andru/papers/padl03.pdf
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- What parts of the design do you expect to resolve through the RFC process before this gets merged?
-- What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
-- What related issues do you consider out of scope for this RFC that could be addressed in the future independently of the solution that comes out of this RFC?
+One large open question is how difficult it will be to convince the verifier the following method is correct:
+
+```dafny
+// 
+function method SortedElements(s: set<int>): seq<T> 
+  ensures multiset(SortedElements(s)) == multiset(s)
+  ensures Seq.Sorted(SortedElements(s))
+{
+  // Assume Seq.Sort and Seq.Sorted are part of the standard library
+  Seq.Sort(seq x | x in s, (a, b) => a < b)
+}
+
+method Foo() {
+  var smallSet := {1, 2};
+  var smallSortedSeq := SortedElements(smallSet);
+  // smallSortedSeq is fully specified, but can the verifier figure that out?
+  assert smallSortedSeq == [1, 2];
+}
+```
+
+One of the first milestones when implementing this RFC will be to prototype just enough verification
+plumbing to evaluate how difficult proving such properties will be, and how many additional axioms
+may need to be added to the Dafny prelude.
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-## Collections
+Adding these building blocks to the Dafny language opens up a wide array of tempting new features.
+
+## User-defined Collections
 
   * Already a concept in Dafny, but now possible to have user-implemented collections
     * `Contains(t)`, which is used for `x in c` expressions
       * Implies `T(0)`
       * Default is `exists x | x in c :: x == t`
 
-## Enumerable and IEnumerable
+## User-defined Enumerable and IEnumerable values
 
   * Must define `Enumerator() returns Enumerator<T>`
   * May define `Size()` to support `|c|`?
-    * Default is `|seq x in c|`
+    * Default is `|multiset x in c|`
   * All finite enumerables are collections, and all finite collections are enumerable, but some infinite collections are not (only defining `in`)
 
-## Enumerator and IEnumerator
+## User-defined Enumerator and IEnumerator implementations
 
   * Must define `Next()`
   * For `Enumerator`
@@ -393,7 +427,9 @@ JMatch!
 
 * Allows `seq i | i in 0..10 :: f(i)`
 
-## mapreduce?
+## reduce expressions?
 
-* `exists x: T | P(x)` == `mapreduce(P, ||, set x: T, false)`
-* `forall x: T | P(x)` == `mapreduce(P, &&, set x: T, true)`
+* Comprehensions can express a lot, but not combining values
+* `exists x: T | P(x)` == `reduce(||, false, multiset x: T :: P(x))`
+* `forall x: T | P(x)` == `reduce(&&, true, multiset x: T :: P(x))`
+* Might realistically depend on "operations" as first-class values somehow
