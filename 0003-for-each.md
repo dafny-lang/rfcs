@@ -17,7 +17,7 @@ This RFC proposes adding two closely-related new features to Dafny for working w
 Loops are notoriously difficult for Dafny users to verify. *** TODO ***
 
 Perhaps the most serious shortcoming is that there is currently no efficient way to iterate over the elements of a `set`.
-The best alternative is to use the assign-such-that operator and set subtraction, illustrated in the reference manual as follows (sec 19.6):
+The best alternative is to use the assign-such-that operator and set subtraction, illustrated in the reference manual as follows ([sec 10.5.2](https://dafny-lang.github.io/dafny/DafnyRef/DafnyRef#1052-sets)):
 
 ```dafny
 // s is a set<int>
@@ -71,7 +71,10 @@ The high-level syntax for a `foreach` loop reuses several existing concepts:
 
 ```
 ForeachLoop ::=
-  "foreach" QuantifierDomain LoopSpec Body
+  "foreach"
+  QuantifierDomain
+  LoopSpec
+  Body
 ```
 
 More specifically, this expands to:
@@ -220,22 +223,19 @@ quantifier domain. The logic for enumerating the values of variables bound by qu
 already exists, to support compiling features such as assign-such-that statements and set comprehensions,
 but the semantics of these existing features do not depend on this ordering.
 
-TODO:
+By far the most common domain for either feature will be `x in c && P(x)`, where `c` is a builtin collection
+type that determines the order, and `P(x)` will only filter the enumeration and not affect the ordering.
+If `c` is a sequence, it contributes the obvious ordering. If `c` is a set or multiset, however, the ordering is
+deterministic but under-specified. That is, it will be the same for each enumeration of the same value
+within the same execution of the same program, but the verifier will have no information about this ordering,
+only that all values are eventually produced exactly once. We expect a common pattern will be to create a sequence
+holding the elements of a set and then sort this sequence, at which point this result WILL be fully deterministic.
 
-  * Ordering determined by domain:
-    * By far the most common will be `x in c`, and usually `c` will be a `seq`
-    * Define rules like associativity that determines ordering. Mostly left overrides right.
-      * `x in A && P(x)` -> `A.Enumerator().Filter(P)`
-        * Sort-of consistent with multiset "*" intersection but not quite
-      * `x in A || x in B` -> `A.Enumerator().Concat(B.Enumerator())`
-        * Consistent with multiset "+" union
-      * `x !in A` -> `(seq x: T).Enumerator().Filter(x => x !in A)`
-      * `x in A && y in B` -> `A.Enumerator().CrossProduct(B.Enumerator())` (or nested loop depending on context)
-      * Simplest if every subexpression must be enumerable, even if there are cases where that's not necessary
-    * The good news is if you care about the ordering and try to prove something based on an incorrect understanding of the
-      enumeration order, verification will fail.
-
-
+The general rules for ordering are syntax-driven, recursively defined for any boolean expression. A sketch of
+these rules is provided in the following section, but should not be relevant for Dafny users except for unusual cases.
+Fortunately, if a user misunderstands these rules and attempts to assert a property that does not actually hold,
+the verifier will at least flag this explicitly. Ideally, Dafny IDE would provide hover text with information about
+how a particular domain is ordered when relevant, just as *** TODO ***
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -246,13 +246,22 @@ TODO:
     * foreach loops mostly desugared into ???
     * sequence comprehensions mapped to Seq.Build calls, but may need more axioms
   * At least a sketch of domain enumeration ordering
+    * Define rules like associativity that determines ordering. Mostly left overrides right.
+    * `x in A && P(x)` -> `A.Enumerator().Filter(P)`
+      * Sort-of consistent with multiset "*" intersection but not quite
+    * `x in A || x in B` -> `A.Enumerator().Concat(B.Enumerator())`
+      * Consistent with multiset "+" union
+    * `x !in A` -> `(seq x: T).Enumerator().Filter(x => x !in A)`
+    * `x in A && y in B` -> `A.Enumerator().CrossProduct(B.Enumerator())` (or nested loop depending on context)
+    * Simplest if every subexpression must be enumerable, even if there are cases where that's not necessary
   * SeqComprehension can borrow a lot from the common ComprehensionExpr supertype
-
 
 # Drawbacks
 [drawbacks]: #drawbacks
 
-Why should we *not* do this?
+* New concept of enumeration ordering, extra implementation effort for new builtin collection types
+* Potential confusion over enumeration ordering rules
+* 
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
@@ -266,7 +275,6 @@ I propose that leveraging the existing mathematical concepts and syntax is very 
 
 * Could overload `for LHS in RHS` so we didn't need another keyword
   * Doesn't read quite as well since the RHS won't name individual values like `0 to 10` does
-* Could just define `foreach` for built-in collection types
 * Could extend `forall` statements to support compilation as well
   * Probably only support specific syntax
   * Semantics don't match - `forall` has simultaneous semantics, allowing things like swaps (?), but we need sequential execution
@@ -281,26 +289,8 @@ These features are largely and obviously inspired by the existing features in Da
 
 Sequence comprehensions bear a strong resemblance to list comprehensions in Python. 
 
-
-Discuss prior art, both the good and the bad, in relation to this proposal.
-A few examples of what this can include are:
-
-- For language, library, tools, and compiler proposals: Does this feature exist in other programming languages and what experience have their community had?
-- For community proposals: Is this done by some other community and what were their experiences with it?
-- For other teams: What lessons can we learn from what other communities have done here?
-- Papers: Are there any published papers or great posts that discuss this? If you have some relevant papers to refer to, this can serve as a more detailed theoretical background.
-
-This section is intended to encourage you as an author to think about the lessons from other languages, provide readers of your RFC with a fuller picture.
-If there is no prior art, that is fine - your ideas are interesting to us whether they are brand new or if it is an adaptation from other languages.
-
-Note that while precedent set by other languages is some motivation, it does not on its own motivate an RFC.
-
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
-
-* How to support concurrency in the future? Anything cheap we can do to be more forward-compatible?
-* `Repr` hasn't actually been added to the stdlib yet, and iterators define `_reads`, `_modifies`, etc.
-  instead. What do for enumera[ble|tor]s?
 
 - What parts of the design do you expect to resolve through the RFC process before this gets merged?
 - What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
