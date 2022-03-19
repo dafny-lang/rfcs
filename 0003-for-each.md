@@ -8,15 +8,17 @@
 
 This RFC proposes adding two closely-related new features to Dafny for working with collections :
 
-1. `foreach` loops, initially only supporting the builtin collection types but leaving the door open for user-defined collections.
+1. `foreach` loops over any enumerable domain, initially only supporting the builtin collection types but leaving the door open for user-defined collections.
 2. Generalized sequence comprehension expressions, similar to the existing `set` and `map` comprehension expressions and more flexible than the current `seq(5, i => i*i)` form.
 
 # Motivation
 [motivation]: #motivation
 
-Loops are notoriously difficult for Dafny users to verify. *** TODO ***
+Loops are notoriously difficult for Dafny users to verify, and coming up with the correct loop invariants to prove a loop correct 
+is particularly challenging. The recent addition of `for` loops was a good step to abstract away from raw `while` loops,
+but only supports 
 
-Perhaps the most serious shortcoming is that there is currently no efficient way to iterate over the elements of a `set`.
+Perhaps the most serious shortcoming is that there is currently no efficient way to iterate over the elements of a `set` at all.
 The best alternative is to use the assign-such-that operator and set subtraction, illustrated in the reference manual as follows ([sec 10.5.2](https://dafny-lang.github.io/dafny/DafnyRef/DafnyRef#1052-sets)):
 
 ```dafny
@@ -32,8 +34,11 @@ while ss != {}
 ```
 
 This is functionally correct, but because set subtraction requires creating a fresh copy,
-the compiled loop requires quadratic time and memory (or at least garbage-collection work) in the size of the set. 
-The equivalent loop using `foreach` is:
+when compiled this loop requires quadratic time and memory (or at least garbage-collection work) in the size of the set.
+The only way to avoid this cost is to write additional external code in the target language to interface directly with the
+internal runtime implementation of `set` values.
+
+By comparison, the equivalent `foreach` loop is:
 
 ```dafny
 foreach i | i in s {
@@ -42,14 +47,20 @@ foreach i | i in s {
 ```
 
 The runtime implementation of this loop can use the native iteration features of the target language.
-Just producing a sequence of the values in the set is even simpler, using a sequence comprehension expression: `seq i | i in s`.
+
+Going further, it is better to avoid writing any imperative loop at all where possible. Sticking to immutable data and
+expressions rather than statements allows logic to be used in specifications as well as implementation,
+and reduces the burden on the Dafny verifier. The proposed sequence comprehension expression allows more
+logic that ultimately produces a sequence of values to be expressed as a value rather than a statement.
+Just producing a sequence of the values in a set is simple using a sequence comprehension expression: `seq i | i in s`.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
 ## foreach Loops
 
-Here is very simple example of a `foreach` loop:
+A `foreach` loop in Dafny resembles `for` or `foreach` loops in many other mainstream languages,
+but is substantially more general and expressive. A very simple example only looks slightly different than expected:
 
 ```dafny
 foreach x | x in [1, 2, 3, 4, 5] {
@@ -101,7 +112,7 @@ foreach x: real | 0.0 <= x < 1.0 {
 }
 ```
 
-The domain is allowed to be infinite, however, if the loop is used in a compiled context and an explicit `decreases` clause is provided.
+The domain is allowed to infinite if the loop is used in a compiled context and an explicit `decreases` clause is provided.
 `decreases *` is permitted, in which the `foreach` loop may never terminate. Any other `decreases` clause can be provided
 to ensure the loop terminates even if the domain is potentially infinite. The following (slightly bizarre) example is legal:
 
@@ -122,6 +133,29 @@ which also makes it easier for the compiled program to avoid unnecessary interme
 ```dafny
 foreach k, v | m[k] == v {
   print "m[", k, "] == ", v;
+}
+```
+
+Note that the range expression is optional, and if omitted the loop will iterate over all
+possible values of the types of the bound variables. This is only permitted if all such types
+are enumerable, which is not true of the `real` type, for example. This supports an elegant
+pattern for iterating over simple datatypes and other types with few values, including subset types.
+
+```
+datatype Suit = Clubs | Diamonds | Hearts | Spades
+
+foreach s: Suit {
+  ...
+}
+
+foreach b1: bool, b2: bool {
+  expect TestMyFunctionWithOptions(b1, b2) == true;
+}
+
+type SmallIndex = x: nat | 0 <= x < 8
+
+foreach i: SmallIndex {
+  ...
 }
 ```
 
@@ -220,22 +254,25 @@ Sequence comprehensions are strictly more expressive, as any construction `seq(s
 
 The semantics of both of these features depend on defining an enumeration order for any enumerable
 quantifier domain. The logic for enumerating the values of variables bound by quantification at runtime
-already exists, to support compiling features such as assign-such-that statements and set comprehensions,
+already exists, to support compiling features such as assign-such-that statements (i.e. using `:|`) and set comprehensions,
 but the semantics of these existing features do not depend on this ordering.
 
 By far the most common domain for either feature will be `x in c && P(x)`, where `c` is a builtin collection
-type that determines the order, and `P(x)` will only filter the enumeration and not affect the ordering.
+type that determines the order, and `P(x)` will only filter the enumeration and not affect the ordering (and will
+most often be ommitted entirely).
 If `c` is a sequence, it contributes the obvious ordering. If `c` is a set or multiset, however, the ordering is
 deterministic but under-specified. That is, it will be the same for each enumeration of the same value
 within the same execution of the same program, but the verifier will have no information about this ordering,
 only that all values are eventually produced exactly once. We expect a common pattern will be to create a sequence
-holding the elements of a set and then sort this sequence, at which point this result WILL be fully deterministic.
+holding the elements of a set and then sort this sequence, at which point this result WILL be fully deterministic
+and understood by the verifier.
 
 The general rules for ordering are syntax-driven, recursively defined for any boolean expression. A sketch of
 these rules is provided in the following section, but should not be relevant for Dafny users except for unusual cases.
 Fortunately, if a user misunderstands these rules and attempts to assert a property that does not actually hold,
 the verifier will at least flag this explicitly. Ideally, Dafny IDE would provide hover text with information about
-how a particular domain is ordered when relevant, just as *** TODO ***
+how a particular domain is ordered when relevant, just as the current language server highlights selected triggers
+for a quantification. 
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -261,7 +298,9 @@ TODO:
 
 * New concept of enumeration ordering, extra implementation effort for new builtin collection types
 * Potential confusion over enumeration ordering rules
-* 
+* Potential subtle bugs in runtime implementations if `set` ordering isn't determinisitic
+  * Already implicitly tested by asserting the exact output when printing sets
+
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
@@ -287,7 +326,9 @@ I propose that leveraging the existing mathematical concepts and syntax is very 
 
 These features are largely and obviously inspired by the existing features in Dafny for quantification of one or more variables.
 
-Sequence comprehensions bear a strong resemblance to list comprehensions in Python. 
+Sequence comprehensions bear a strong resemblance to list comprehensions in Python. *** TODO ***
+
+JMatch!
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
@@ -327,7 +368,8 @@ Sequence comprehensions bear a strong resemblance to list comprehensions in Pyth
 ## Short-form quantifier domains
 
   * `x in c` ==> `x | x in c`
-  * `(x, y) in myMap.Items` ==> `x, y | (x, y) in myMap.Items`
+  * `(k, v) in myMap.Items` ==> `k, v | (k, v) in myMap.Items`
+    * `k, v | m[k] == v` ==> `m[k] == v`
   * In general: `<Expr>` ==> `<bound vars in Expr> | <Expr>`
   * Can also allow omitting the range expression: `x: T` ==> `x: T | true`
     * Useful for subset types: define something like `type Index = x: int | 0 <= index < 10`, and then do `foreach i: Index { ... }`
@@ -337,8 +379,10 @@ Sequence comprehensions bear a strong resemblance to list comprehensions in Pyth
 
 * Avoids requiring the element type is auto-initializable
 
-`var a := new int[] i :: i * i;`
+`var a := new int[10] i :: i * i;`
 `var a := new int[|s|] i :: s[i]`
+  * SeqToArray helper method?
+  * Good way to dump a set into an array so you can sort it
 `var a := new int[10, 10] i, j :: i * j`
 
 ## Multiset comprehensions
@@ -348,3 +392,8 @@ Sequence comprehensions bear a strong resemblance to list comprehensions in Pyth
 ## Ranges as first-class values
 
 * Allows `seq i | i in 0..10 :: f(i)`
+
+## mapreduce?
+
+* `exists x: T | P(x)` == `mapreduce(P, ||, set x: T, false)`
+* `forall x: T | P(x)` == `mapreduce(P, &&, set x: T, true)`
