@@ -259,7 +259,7 @@ but the semantics of these existing features do not depend on this ordering.
 
 By far the most common domain for either feature will be `x in c && P(x)`, where `c` is a builtin collection
 type that determines the order, and `P(x)` will only filter the enumeration and not affect the ordering (and will
-most often be ommitted entirely).
+most often be omitted entirely).
 If `c` is a sequence, it contributes the obvious ordering. If `c` is a set or multiset, however, the ordering is
 deterministic but under-specified. That is, it will be the same for each enumeration of the same value
 within the same execution of the same program, but the verifier will have no information about this ordering,
@@ -270,7 +270,7 @@ and understood by the verifier.
 The general rules for ordering are syntax-driven, recursively defined for any boolean expression. A sketch of
 these rules is provided in the following section, but should not be relevant for Dafny users except for unusual cases.
 Fortunately, if a user misunderstands these rules and attempts to assert a property that does not actually hold,
-the verifier will at least flag this explicitly. Ideally, Dafny IDE would provide hover text with information about
+the verifier will at least flag this explicitly. Ideally, Dafny IDEs would provide hover text with information about
 how a particular domain is ordered when relevant, just as the current language server highlights selected triggers
 for a quantification. 
 
@@ -280,23 +280,66 @@ for a quantification.
 As mentioned in the guide-level explanation, `foreach` loops and sequence comprehensions are both able to
 borrow concepts and implementation substantially from other features. Parsing, resolving, verifying, and compiling
 quantifier domains is already a mature aspect of the Dafny implementation. The most significant implementation burden
-is ensuring that enumeration ordering is deterministic.
+is ensuring that enumeration ordering is deterministic. The existing compilation logic for enumerating a domain
+treats this ordering as pure implementation detail, and applies heuristic optimizations to try to make the search as short
+as possible. Ensuring consistent ordering is an additional constraint on this logic, applied only when the surrounding context
+is a sequence comprehension or `foreach` loop.
+
+Here is a sketch of the rules that define the enumeration ordering of a quantifier domain:
+
+  * Every boolean expression defines an ordered enumeration of free variable bindings that satisfy it. This enumeration may include duplicate bindings, and the ordering is significant. This is a generalization of the definition of the set of bindings that satisfy a given boolean expression.
+
+
+Examples:
+
+```dafny
+// Special cases for one variable:
+seq x: T | A && B == seq x | A * seq x | B (Not a built-in operation - multiplicities multiplied! :)
+seq x: T | A || B == seq x | A + seq x | B (works for multisets too)
+seq x: T | !A == seq x: T - seq x | A
+
+
+seq x | x in [1, 2, 2] && x in [2, 2, 1] == [1, 2, 2, 2, 2]
+seq x | x in [1, 2, 2] && x in {2, 1} == [1, 2, 2]
+seq x | x in [1, 2, 2] || x in {2, 1} == [1, 2, 2, 2, 1] // Ordering of last two not specified
+seq x, y | y in [[1, 2], [3, 4]] && x in y :: x == [1, 2, 3, 4]
+seq x, y | y in [[1, 1], [1, 1]] && x in y :: x == [1, 1, 1, 1]
+
+seq x, y | y == {1, 2, 3} && x in y == [2, 3, 1] // Or something
+seq x, y | x in y && y == {1, 2, 3} ==> "Error: can't calculate ordered enumeration"
+multiset x, y | x in y && y == {1, 2, 3} ==> multiset{2, 3, 1}
+multiset x, y | x in y && y == [1, 2, 1] ==> multiset{1, 1, 2}
+
+// Weird edge case with no bound variables (not parseable, but base case for general enumeration algorithm)
+seq | 2 in [2, 2] :: 42 == [42, 42]
+
+```
+
+Semantics of `seq bvs | A && B`:
+
+```
+EnumerateConjunction(A, B) {
+  foreach binding b in A {
+    B' := B[b]
+    foreach binding b' in B' {
+      yield b'
+    }
+  }
+}
+```
+
+  * Requires LHS to be enumerable, not fully symmetrical
+    * `&&` already isn't: `b != 0 && a/b > 1` is valid but `a/b > 1 && b != 0` is not
+  * COULD generalize to say that domains have an ordering even if they are not enumerable, allow RHS to enumerate and then sort by LHS
 
 TODO:
 
   * Verification encoding
     * foreach loops most likely just desugared into existing loop translation
     * sequence comprehensions mapped to Seq.Build calls, but may need more axioms
-  * (At least a sketch of domain enumeration ordering)
-    * Define rules like associativity that determines ordering. Mostly left overrides right.
-    * `x in A && P(x)` -> `A.Enumerator().Filter(P)`
-      * Sort-of consistent with multiset "*" intersection but not quite
-    * `x in A || x in B` -> `A.Enumerator().Concat(B.Enumerator())`
-      * Consistent with multiset "+" union
-    * `x !in A` -> `(seq x: T).Enumerator().Filter(x => x !in A)`
-    * `x in A && y in B` -> `A.Enumerator().CrossProduct(B.Enumerator())` (or nested loop depending on context)
-    * Simplest if every subexpression must be enumerable, even if there are cases where that's not necessary
-  * SeqComprehension can borrow a lot from the common ComprehensionExpr supertype
+
+HMM: Why does multiset union (`+`) take the sum of multiplicities, but intersection (`*`) take the minimum? Shouldn't union take the maximum instead?
+  * Looks like multiset sum instead: https://en.wikipedia.org/wiki/Multiset#Basic_properties_and_operations
 
 # Drawbacks
 [drawbacks]: #drawbacks
@@ -348,13 +391,12 @@ JMatch! https://www.cs.cornell.edu/andru/papers/padl03.pdf
 One large open question is how difficult it will be to convince the verifier the following method is correct:
 
 ```dafny
-// 
-function method SortedElements(s: set<int>): seq<T> 
+function method SortedElements(s: set<int>): seq<int> 
   ensures multiset(SortedElements(s)) == multiset(s)
-  ensures Seq.Sorted(SortedElements(s))
+  ensures Seq.IsSorted(SortedElements(s), (a, b) => a < b)
 {
-  // Assume Seq.Sort and Seq.Sorted are part of the standard library
-  Seq.Sort(seq x | x in s, (a, b) => a < b)
+  // Assume Seq.Sorted and Seq.IsSorted are part of the standard library
+  Seq.Sorted(seq x | x in s, (a, b) => a < b)
 }
 
 method Foo() {
@@ -409,6 +451,11 @@ Adding these building blocks to the Dafny language opens up a wide array of temp
     * Useful for subset types: define something like `type Index = x: int | 0 <= index < 10`, and then do `foreach i: Index { ... }`
   * Applies to comprehensions (seq, set, map) and quantifier expressions (forall, exists)
 
+## Unicode strings
+
+  * Both features provide an efficient way to iterate over values in an ordered collection that isn't efficiently random access
+
+
 ## Array comprehensions
 
 * Avoids requiring the element type is auto-initializable
@@ -425,11 +472,24 @@ Adding these building blocks to the Dafny language opens up a wide array of temp
 
 ## Ranges as first-class values
 
+* Another kind of builtin collection
 * Allows `seq i | i in 0..10 :: f(i)`
 
-## reduce expressions?
+## collect expressions?
 
 * Comprehensions can express a lot, but not combining values
-* `exists x: T | P(x)` == `reduce(||, false, multiset x: T :: P(x))`
-* `forall x: T | P(x)` == `reduce(&&, true, multiset x: T :: P(x))`
+* `exists x: T | P(x)` == `collect x: T :: P(x) to ||. false`
+* `forall x: T | P(x)` == `collect x: T :: P(x) to &&, true`
 * Might realistically depend on "operations" as first-class values somehow
+  * type class?
+  * Dual of enumerator, "aggregator"? "collector"?
+    * More like the dual of a collection
+  * Could just parameterize just by the intermediate type:
+    * `collect<Averager>`
+* `exists x: T | P(x) == collect(||) x: T :: P(x)`
+* `forall x: T | P(x) == collect(&&) x: T :: P(x)`
+* `var sum := collect(+) x: T :: P(x)`
+* `var avg := collect(Average) x: T :: P(x)`
+
+
+## iterator types as collections
