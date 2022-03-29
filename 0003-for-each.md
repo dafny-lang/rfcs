@@ -16,10 +16,39 @@ This RFC proposes adding two closely-related new features to Dafny for working w
 
 Loops are notoriously difficult for Dafny users to verify, and coming up with the correct loop invariants to prove a loop correct 
 is particularly challenging. The recent addition of `for` loops was a good step to abstract away from raw `while` loops,
-but only supports 
+but only supports consecutive integer indices. They still fall short of the expressiveness and economy of `for` or `foreach` loops in
+many mainstream programming languages. which generally iterate through the contents of a collection of some kind.
+It is a well-established best practice to avoid manual loop indexes wherever possible, as they force the assumption that datatypes
+support efficient random access, and are more likely to be used incorrectly by accident:
+
+```dafny
+// Before:
+method AllPairs(s: seq<nat>) returns (result: seq<(nat, nat)>) {
+  for i := 0 to |s| {
+    for j := 0 to |s| {
+      result := result + (s[i], s[i]);  // Whoops!
+    }
+  }
+}
+
+// After:
+method AllPairs(s: seq<nat>) returns (result: seq<(nat, nat)>) {
+  foreach left | left in s {
+    foreach right | right in s {
+      result := result + (left, right);
+    }
+  }
+}
+
+// Or even better, as an expression:
+function AllPairs(s: seq<nat>): seq<(nat, nat)> {
+  seq left, right | left in s && right in s
+}
+```
 
 Perhaps the most serious shortcoming is that there is currently no efficient way to iterate over the elements of a `set` at all.
-The best alternative is to use the assign-such-that operator and set subtraction, illustrated in the reference manual as follows ([sec 10.5.2](https://dafny-lang.github.io/dafny/DafnyRef/DafnyRef#1052-sets)):
+The best alternative is to use the assign-such-that operator and set subtraction, illustrated in the reference manual as follows
+([sec 10.5.2](https://dafny-lang.github.io/dafny/DafnyRef/DafnyRef#1052-sets)):
 
 ```dafny
 // s is a set<int>
@@ -131,7 +160,7 @@ Looping over the keys and values of a map is particularly readable and aesthetic
 which also makes it easier for the compiled program to avoid unnecessary intermediate tuple values:
 
 ```dafny
-foreach k, v | m[k] == v {
+foreach k, v | k in m.Keys && m[k] == v {
   print "m[", k, "] == ", v;
 }
 ```
@@ -215,7 +244,7 @@ SeqComprehension ::=
 
 Sequence comprehensions are the expression analogues of `foreach` loops, just as
 `forall` expressions are the analogues of `forall` statements. The value of any given
-`seq <BoundVariables> | <Range> :: <Term>` expression is calculated by the following `foreach` loop:
+`seq <BoundVariables> | <Range> :: <Term>` expression is specified by the following `foreach` loop:
 
 ```dafny
 var result := [];
@@ -285,61 +314,73 @@ treats this ordering as pure implementation detail, and applies heuristic optimi
 as possible. Ensuring consistent ordering is an additional constraint on this logic, applied only when the surrounding context
 is a sequence comprehension or `foreach` loop.
 
-Here is a sketch of the rules that define the enumeration ordering of a quantifier domain:
+Here is a sketch of the rules that define the enumeration ordering of a quantifier domain.
+These rules are chosen as generalizations of the existing semantics for set comprehensions,
+such that building a set from all elements in the ordered enumeration results in the same value.
 
-  * Every boolean expression defines an ordered enumeration of free variable bindings that satisfy it. This enumeration may include duplicate bindings, and the ordering is significant. This is a generalization of the definition of the set of bindings that satisfy a given boolean expression.
+  * Every boolean expression defines an ordered enumeration of free variable bindings that satisfy it. This enumeration may include duplicate bindings, and the ordering is significant.
+  * The most common base case is an expression of the form `x in C`, where `C` is an expression with a sequence, multiset, or (i)set type. These expressions produce enumerations that bind only `x` to each value in the collection.
+    * For sequences, the ordering is the obvious ordering of values in the sequence.
+    * For multisets or (i)sets, the exact ordering is deterministic but unspecified.
+    * Potentially-infinite sets are only allowed if they are enumerable.
+    * If `x` is not a variable, then the enumeration produces an empty set of bindings once for each time the LHS appears in the RHS collection.
+  * For an expression of the form `A && B`, the enumeration includes all bindings that satisfy both `A` and `B`. The enumeration ordering is defined by ordering first by `A`'s ordering and then by `B`'s. See below for the pseudocode that calculates this enumeration.
+    * This means that the `&&` operation is not fully symmetrical, but this is already true as verification considers it to be "short-circuiting": 
+      `b != 0 && a/b > 1` is valid but `a/b > 1 && b != 0` is not.
+    * This definition is chosen such that the multiplicities of results from `A && B` is the same as `B && A`, even if the ordering is not the same. 
+  * For an expression of the form `A || B`, the enumeration will simply produce the values enumerated by `A` followed by those enumerated by `B`.
+  * If the context of an expression binds a variable that is not used in the expression, such as `seq x: bool | true`, 
+    then the default ordering for the type of the variable is used (i.e. `[false, true]` in this case). 
+    If this type is not enumerable, then the expression is not allowed.
+  * For an expression of the form `!A`, the enumeration will produce all values of the types of the bound variables that do not satisfy `A`. 
+    As above, if any of these types are not enumerable the expression is not allowed.
 
-
-Examples:
-
-```dafny
-// Special cases for one variable:
-seq x: T | A && B == seq x | A * seq x | B (Not a built-in operation - multiplicities multiplied! :)
-seq x: T | A || B == seq x | A + seq x | B (works for multisets too)
-seq x: T | !A == seq x: T - seq x | A
-
-
-seq x | x in [1, 2, 2] && x in [2, 2, 1] == [1, 2, 2, 2, 2]
-seq x | x in [1, 2, 2] && x in {2, 1} == [1, 2, 2]
-seq x | x in [1, 2, 2] || x in {2, 1} == [1, 2, 2, 2, 1] // Ordering of last two not specified
-seq x, y | y in [[1, 2], [3, 4]] && x in y :: x == [1, 2, 3, 4]
-seq x, y | y in [[1, 1], [1, 1]] && x in y :: x == [1, 1, 1, 1]
-
-seq x, y | y == {1, 2, 3} && x in y == [2, 3, 1] // Or something
-seq x, y | x in y && y == {1, 2, 3} ==> "Error: can't calculate ordered enumeration"
-multiset x, y | x in y && y == {1, 2, 3} ==> multiset{2, 3, 1}
-multiset x, y | x in y && y == [1, 2, 1] ==> multiset{1, 1, 2}
-
-// Weird edge case with no bound variables (not parseable, but base case for general enumeration algorithm)
-seq | 2 in [2, 2] :: 42 == [42, 42]
+Here is the pseudocode for the semantics of the ordered enumeration of bindings for `A && B`:
 
 ```
-
-Semantics of `seq bvs | A && B`:
-
-```
-EnumerateConjunction(A, B) {
-  foreach binding b in A {
-    B' := B[b]
-    foreach binding b' in B' {
-      yield b'
+IEnumerable<ActualBindings> EnumerateConjunction(Expr A, Expr B) {
+  foreach (ActualBindings a in A) {
+    Expr B' := B[a];  // Substitute the given bindings into the expression B
+    foreach (ActualBindings b' in B') {
+      yield return b';
     }
   }
 }
 ```
 
-  * Requires LHS to be enumerable, not fully symmetrical
-    * `&&` already isn't: `b != 0 && a/b > 1` is valid but `a/b > 1 && b != 0` is not
-  * COULD generalize to say that domains have an ordering even if they are not enumerable, allow RHS to enumerate and then sort by LHS
+And some illustrative examples using sequence comprehensions:
+
+```dafny
+// Special cases for one variable:
+seq x: T | A && B == seq x | A * seq x | B  // Not an actual built-in operation, but a generalization of set intersection.
+seq x: T | A || B == seq x | A + seq x | B
+seq x: T | !A == seq x: T - seq x | A       // Not an actual built-in operation, but a generalization of set subtraction.
+                                            // Only well-formed if T itself is enumerable.
+
+seq x | x in [1, 2, 2] && x in [2, 2, 1] == [1, 2, 2, 2, 2]
+seq x | x in [1, 2, 2] && x in {2, 1} == [1, 2, 2]
+seq x | x in [1, 2, 2] || x in {2, 1} == [1, 2, 2, 1, 2] // Ordering of last two not specified
+seq x, y | y in [[1, 2], [3, 4]] && x in y :: x == [1, 2, 3, 4]
+seq x, y | y in [[1, 1], [1, 1]] && x in y :: x == [1, 1, 1, 1]
+
+seq x, y | y == {1, 2, 3} && x in y == [2, 3, 1] // Ordering not specified
+seq x, y | x in y && y == {1, 2, 3} // ==> "Error: can't calculate ordered enumeration"
+
+// Edge case with no bound variables (not literally supported in Dafny source, but a base case for the general algorithm)
+seq | 2 in [2, 2] :: 42 == [42, 42]
+seq | 1 in [2, 2] :: 42 == []
+```
+
+## Verification
 
 TODO:
 
   * Verification encoding
     * foreach loops most likely just desugared into existing loop translation
     * sequence comprehensions mapped to Seq.Build calls, but may need more axioms
+## Compilation
 
-HMM: Why does multiset union (`+`) take the sum of multiplicities, but intersection (`*`) take the minimum? Shouldn't union take the maximum instead?
-  * Looks like multiset sum instead: https://en.wikipedia.org/wiki/Multiset#Basic_properties_and_operations
+TODO:
 
 # Drawbacks
 [drawbacks]: #drawbacks
@@ -382,6 +423,8 @@ Alternatives:
 These features are largely and obviously inspired by the existing features in Dafny for quantification of one or more variables.
 
 Sequence comprehensions bear a strong resemblance to list comprehensions in Python. 
+
+* Standard library functionality in (for e.g.) Java and Rust
 
 JMatch! https://www.cs.cornell.edu/andru/papers/padl03.pdf
 
@@ -455,13 +498,16 @@ Adding these building blocks to the Dafny language opens up a wide array of temp
 
   * Both features provide an efficient way to iterate over values in an ordered collection that isn't efficiently random access
 
+## More flexible && enumeration
 
+  * could generalize to say that domains have an ordering even if they are not enumerable, allow RHS to enumerate and then sort by LHS
 ## Array comprehensions
 
 * Avoids requiring the element type is auto-initializable
 
 `var a := new int[10] i :: i * i;`
 `var a := new int[|s|] i :: s[i]`
+`var a := new int[] i | i in 0..10`
   * SeqToArray helper method?
   * Good way to dump a set into an array so you can sort it
 `var a := new int[10, 10] i, j :: i * j`
