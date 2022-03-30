@@ -17,7 +17,7 @@ This RFC proposes adding two closely-related new features to Dafny for working w
 Loops are notoriously difficult for Dafny users to verify, and coming up with the correct loop invariants to prove a loop correct 
 is particularly challenging. The recent addition of `for` loops was a good step to abstract away from raw `while` loops,
 but only supports consecutive integer indices. They still fall short of the expressiveness and economy of `for` or `foreach` loops in
-many mainstream programming languages. which generally iterate through the contents of a collection of some kind.
+many mainstream programming languages, which generally iterate through the contents of a collection of some kind.
 It is a well-established best practice to avoid manual loop indexes wherever possible, as they force the assumption that datatypes
 support efficient random access, and are more likely to be used incorrectly by accident:
 
@@ -25,8 +25,10 @@ support efficient random access, and are more likely to be used incorrectly by a
 // Before:
 method AllPairs(s: seq<nat>) returns (result: seq<(nat, nat)>) {
   for i := 0 to |s| {
+    var left := s[i];
     for j := 0 to |s| {
-      result := result + (s[i], s[i]);  // Whoops!
+      var right := s[i]; // Whoops!
+      result := result + (left, right);  
     }
   }
 }
@@ -46,7 +48,7 @@ function AllPairs(s: seq<nat>): seq<(nat, nat)> {
 }
 ```
 
-Perhaps the most serious shortcoming is that there is currently no efficient way to iterate over the elements of a `set` at all.
+A more serious shortcoming is that there is currently no efficient way to iterate over the elements of a `set` at all.
 The best alternative is to use the assign-such-that operator and set subtraction, illustrated in the reference manual as follows
 ([sec 10.5.2](https://dafny-lang.github.io/dafny/DafnyRef/DafnyRef#1052-sets)):
 
@@ -141,7 +143,7 @@ foreach x: real | 0.0 <= x < 1.0 {
 }
 ```
 
-The domain is allowed to infinite if the loop is used in a compiled context and an explicit `decreases` clause is provided.
+The domain is allowed to be potentially infinite if the loop is used in a compiled context and an explicit `decreases` clause is provided.
 `decreases *` is permitted, in which the `foreach` loop may never terminate. Any other `decreases` clause can be provided
 to ensure the loop terminates even if the domain is potentially infinite. The following (slightly bizarre) example is legal:
 
@@ -155,7 +157,7 @@ foreach x: nat
 ```
 
 Most `foreach` loops will take the form `foreach x | x in c { ... }`, where `c` is a `seq`, `set` or `multiset`.
-This includes expressions like `m.Keys`, `m.Values` and `m.Elements` when `m` is a `map`.
+This includes expressions like `m.Keys`, `m.Values` and `m.Items` when `m` is a `map`.
 Looping over the keys and values of a map is particularly readable and aesthetically pleasing with this syntax,
 which also makes it easier for the compiled program to avoid unnecessary intermediate tuple values:
 
@@ -296,7 +298,7 @@ only that all values are eventually produced exactly once. We expect a common pa
 holding the elements of a set and then sort this sequence, at which point this result WILL be fully deterministic
 and understood by the verifier.
 
-The general rules for ordering are syntax-driven, recursively defined for any boolean expression. A sketch of
+The general rules for ordering are syntax-driven and recursively-defined for any boolean expression. A sketch of
 these rules is provided in the following section, but should not be relevant for Dafny users except for unusual cases.
 Fortunately, if a user misunderstands these rules and attempts to assert a property that does not actually hold,
 the verifier will at least flag this explicitly. Ideally, Dafny IDEs would provide hover text with information about
@@ -321,10 +323,10 @@ such that building a set from all elements in the ordered enumeration results in
   * Every boolean expression defines an ordered enumeration of free variable bindings that satisfy it. This enumeration may include duplicate bindings, and the ordering is significant.
   * The most common base case is an expression of the form `x in C`, where `C` is an expression with a sequence, multiset, or (i)set type. These expressions produce enumerations that bind only `x` to each value in the collection.
     * For sequences, the ordering is the obvious ordering of values in the sequence.
-    * For multisets or (i)sets, the exact ordering is deterministic but unspecified.
+    * For (i)sets or multisets, the exact ordering is deterministic but unspecified.
     * Potentially-infinite sets are only allowed if they are enumerable.
     * If `x` is not a variable, then the enumeration produces an empty set of bindings once for each time the LHS appears in the RHS collection.
-  * For an expression of the form `A && B`, the enumeration includes all bindings that satisfy both `A` and `B`. The enumeration ordering is defined by ordering first by `A`'s ordering and then by `B`'s. See below for the pseudocode that calculates this enumeration.
+  * For an expression of the form `A && B`, the enumeration includes all bindings that satisfy both `A` and `B`. The enumeration ordering is defined by ordering first by `A`'s ordering and then by `B`'s, and the multiplicities of bindings is multiplied. See below for the pseudocode that calculates this enumeration.
     * This means that the `&&` operation is not fully symmetrical, but this is already true as verification considers it to be "short-circuiting": 
       `b != 0 && a/b > 1` is valid but `a/b > 1 && b != 0` is not.
     * This definition is chosen such that the multiplicities of results from `A && B` is the same as `B && A`, even if the ordering is not the same. 
@@ -373,14 +375,58 @@ seq | 1 in [2, 2] :: 42 == []
 
 ## Verification
 
-TODO:
+Translating sequence comprehensions to Boogie is *** TODO ***
 
-  * Verification encoding
-    * foreach loops most likely just desugared into existing loop translation
-    * sequence comprehensions mapped to Seq.Build calls, but may need more axioms
+The translation of `foreach` loops can be reduced to sequence comprehensions,
+as the semantics of such loops can be expressed as follows:
+
+```dafny
+// A loop of this form:
+foreach x1, x2, ..., xN | <Range> {
+  <Body>
+}
+
+// Is semantically equivalent to:
+var __s := seq x1, x2, ..., xN | <Range> :: (x1, x2, ..., xN);
+for __i := 0 to |__s| {
+  var (x1, x2, ..., xN) := __s[__i];
+  <Body>
+}
+```
+
 ## Compilation
 
-TODO:
+The most challenging part of compiling these new features is ensuring the enumeration
+ordering of unordered collection types such as sets and multisets is deterministic when used in a sequence comprehension.
+This is closely related to compiling let-such-that expressions (`var x :| ...; ...`), as such expressions
+are implemented by enumerating through the parameters of a domain to search for a match,
+and hence are influenced by this ordering. The current solution is to require any such expressions
+have only one solution, which is not an option here.
+As illustrated in [this paper](https://easychair.org/publications/paper/dM), the challenge is
+that although the runtime values of `{1, 2}` and `{2, 1}` will compare equal to each other,
+their internal representation may differ and hence their enumeration ordering may as well.
+
+Most if not all current Dafny compilers implement a Dafny `set<T>` with some variation on a hash set,
+which is generally a good default choice since this datatype offers constant-time access on average.
+Although different copies of the same set must place each value into the same hashing bucket, multiple
+values may be assigned to the same bucket, so it is necessary to use a secondary data structure of some kind for each bucket,
+and different implementations will use different options. A common simple approach is to maintain a linked list,
+in which case a single bucket will store elements in the order they were added and hence not meet the requirement
+of a deterministic ordering based only on the set of contained elements.
+
+One solution is to use a binary search tree as this secondary data structure instead, assuming that an ordering of
+the elements of the type `T` is available. Some hash set implementations, such as recent versions of the Java `HashSet<T>` type,
+use a similar approach as an internal optimization when many hashing collisions occur, 
+so that the worst case runtime of lookups is O(N log N) rather than O(N).
+The included Dafny runtimes can provide an implementation of Dafny sets and multisets that use this approach consistently,
+and hence provide the efficient average-case access of a hash set but still provide a deterministic enumeration order.
+
+The good news is that individual compilers are free to decide they do not support sequence comprehensions
+whose ordering depends on any such collections. Dafny code that will be compiled using such compilers can 
+fall back to using a `foreach` loop to iterate over sets instead, as statements are permitted to
+observe non-determinism. This means a particular compiler can still map a Dafny `set<T>` value 
+directly to a native implementation of sets, such as a Java `Set<T>`, even though these implementations will
+enumerate their contents with non-deterministic ordering.
 
 # Drawbacks
 [drawbacks]: #drawbacks
@@ -402,6 +448,8 @@ Therefore we should already be documenting this aspect of Dafny semantics and im
 
 I propose that leveraging the existing mathematical concepts and syntax is very "Dafny like".
 
+The most obvious alternative is to only provide the simpler `foreach x in c` syntax. ***
+
 * Matching `forall` statement syntax/semantics (partially) advantages:
   * If someone starts with a forall and then hits the limitation, can easily switch to `foreach`
   * Natural parallel programming paradigm in the future (if `forall` is made more powerful): `foreach` for sequential, `forall` for parallel
@@ -411,27 +459,24 @@ Alternatives:
 * Could only support `foreach x in c`: only direct collections, one bound value (even if we allow destructuring as in `foreach (k, v) in myMap`)
 * Could overload `for LHS in RHS` so we didn't need another keyword
   * Doesn't read quite as well since the RHS won't name individual values like `0 to 10` does
-* Could extend `forall` statements to support compilation as well
-  * Probably only support specific syntax
-  * Semantics don't match - `forall` has simultaneous semantics, allowing things like swaps (?), but we need sequential execution
+
 
 # Prior art
 [prior-art]: #prior-art
 
-*** TODO ***
-
 These features are largely and obviously inspired by the existing features in Dafny for quantification of one or more variables.
 
-Sequence comprehensions bear a strong resemblance to list comprehensions in Python. 
+* Sequence comprehensions bear a strong resemblance to list comprehensions in Python. 
 
-* Standard library functionality in (for e.g.) Java and Rust
+* Standard library functionality in (for e.g.) Java and Rust. The proposed Dafny features provide similar functionality at a higher level
+of abstraction more amenable to verification.
 
-JMatch! https://www.cs.cornell.edu/andru/papers/padl03.pdf
+* JMatch! https://www.cs.cornell.edu/andru/papers/padl03.pdf
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-One large open question is how difficult it will be to convince the verifier the following method is correct:
+One large open question is how difficult it will be to convince the verifier the following is correct:
 
 ```dafny
 function method SortedElements(s: set<int>): seq<int> 
@@ -480,6 +525,7 @@ Adding these building blocks to the Dafny language opens up a wide array of temp
     * `T` must be failure-compatible
     * Must define `Decreases()`
 
+* Implementing via an `iterator`
 * Adding chaining methods to Enumerator/Enumerable
 * Batch optimization of the above
   * Requires allowing subclasses to override default implementations
@@ -488,10 +534,8 @@ Adding these building blocks to the Dafny language opens up a wide array of temp
 
   * `x in c` ==> `x | x in c`
   * `(k, v) in myMap.Items` ==> `k, v | (k, v) in myMap.Items`
-    * `k, v | m[k] == v` ==> `m[k] == v`
-  * In general: `<Expr>` ==> `<bound vars in Expr> | <Expr>`
-  * Can also allow omitting the range expression: `x: T` ==> `x: T | true`
-    * Useful for subset types: define something like `type Index = x: int | 0 <= index < 10`, and then do `foreach i: Index { ... }`
+    * `k, v | k in m.Keys && m[k] == v` ==> `k in m.Keys && m[k] == v`
+  * In general: `<Expr>` ==> `<free variables in Expr> | <Expr>`
   * Applies to comprehensions (seq, set, map) and quantifier expressions (forall, exists)
 
 ## Unicode strings
@@ -515,6 +559,7 @@ Adding these building blocks to the Dafny language opens up a wide array of temp
 ## Multiset comprehensions
 
 * Similar semantics as sequence comprehensions: counts the number of times a result is enumerated, but does not maintain ordering.
+* Almost free once you have sequence comprehensions implemented
 
 ## Ranges as first-class values
 
@@ -536,6 +581,3 @@ Adding these building blocks to the Dafny language opens up a wide array of temp
 * `forall x: T | P(x) == collect(&&) x: T :: P(x)`
 * `var sum := collect(+) x: T :: P(x)`
 * `var avg := collect(Average) x: T :: P(x)`
-
-
-## iterator types as collections
