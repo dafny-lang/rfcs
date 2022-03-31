@@ -276,7 +276,7 @@ var c: seq<T> := ...;
 var flatMapped: seq<T> := seq x, y | x in c && y in f(x) :: y;
 ```
 
-Note that the existing `seq(k, n => n + 1)` syntax is inconsistently-named in the Dafny reference manual, 
+Note that the existing `seq(size, i => i + 1)` syntax is inconsistently-named in the Dafny reference manual, 
 but we refer to it here as a "sequence construction" expression, to disambiguate it from the proposed sequence comprehension feature.
 Sequence comprehensions are strictly more expressive, as any construction `seq(size, f)` can be rewritten as 
 `seq i | 0 <= i < size :: f(i)`.
@@ -354,12 +354,12 @@ And some illustrative examples using sequence comprehensions:
 
 ```dafny
 // Special cases for one variable:
-seq x: T | A && B == seq x | A * seq x | B  // Not an actual built-in operation, but a generalization of set intersection.
-seq x: T | A || B == seq x | A + seq x | B
-seq x: T | !A == seq x: T - seq x | A       // Not an actual built-in operation, but a generalization of set subtraction.
+(seq x: T | A && B) == (seq x | A) * (seq x | B)  // Not an actual built-in operation, but a generalization of set intersection.
+(seq x: T | A || B) == (seq x | A) + (seq x | B)
+(seq x: T | !A) == (seq x: T) - (seq x | A)       // Not an actual built-in operation, but a generalization of set subtraction.
                                             // Only well-formed if T itself is enumerable.
 
-seq x | x in [1, 2, 2] && x in [2, 2, 1] == [1, 2, 2, 2, 2]
+(seq x | x in [1, 2, 2] && x in [2, 2, 1]) == [1, 2, 2, 2, 2]
 seq x | x in [1, 2, 2] && x in {2, 1} == [1, 2, 2]
 seq x | x in [1, 2, 2] || x in {2, 1} == [1, 2, 2, 1, 2] // Ordering of last two not specified
 seq x, y | y in [[1, 2], [3, 4]] && x in y :: x == [1, 2, 3, 4]
