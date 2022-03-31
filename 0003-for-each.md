@@ -444,39 +444,36 @@ Therefore we should already be documenting this aspect of Dafny semantics and im
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-*** TODO *** 
-
-I propose that leveraging the existing mathematical concepts and syntax is very "Dafny like".
-
-The most obvious alternative is to only provide the simpler `foreach x in c` syntax. ***
-
-* Matching `forall` statement syntax/semantics (partially) advantages:
-  * If someone starts with a forall and then hits the limitation, can easily switch to `foreach`
-  * Natural parallel programming paradigm in the future (if `forall` is made more powerful): `foreach` for sequential, `forall` for parallel
-
-Alternatives:
-
-* Could only support `foreach x in c`: only direct collections, one bound value (even if we allow destructuring as in `foreach (k, v) in myMap`)
-* Could overload `for LHS in RHS` so we didn't need another keyword
-  * Doesn't read quite as well since the RHS won't name individual values like `0 to 10` does
-
+The most obvious alternative is to only provide the simpler `foreach x in C` syntax, where `C` is any collection value.
+This is certainly a well-formed and sound construct, but far less powerful than the proposed version, especially
+when sequence comprehensions are excluded. It also still runs into some of the same semantic challenges around
+ordering if `C` is allowed to be a set or multiset anyway, since verification of such a loop still needs to be aware of
+this ordering. Offering `foreach` loops along with sequence comprehensions means we can recommend the latter where possible,
+with the former as a fallback that is inevitably more complicated to verify.
 
 # Prior art
 [prior-art]: #prior-art
 
 These features are largely and obviously inspired by the existing features in Dafny for quantification of one or more variables.
 
-* Sequence comprehensions bear a strong resemblance to list comprehensions in Python. 
+Sequence comprehensions bear a strong resemblance to list comprehensions in Python, which also include similar abilities to 
+bind multiple variables and filter the enumerated values: `[(x, y) for x in [1,2,3] for y in [3,1,4] if x != y]`
 
-* Standard library functionality in (for e.g.) Java and Rust. The proposed Dafny features provide similar functionality at a higher level
-of abstraction more amenable to verification.
+Most mainstream programming languages include rich libraries for working with collections and iterators,
+and define much the same operations such as "filter" and "flatMap".
+The proposed Dafny features provide similar functionality at a higher level
+of abstraction more amenable to verification: quantification expressions are used to succinctly declare the behavior of
+an operation that in spirit applies several such operations. See the "Future Possibilities" section for ideas for
+pushing this philosophy even further.
+
 
 * JMatch! https://www.cs.cornell.edu/andru/papers/padl03.pdf
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-One large open question is how difficult it will be to convince the verifier the following is correct:
+One large open question is how difficult it will be to convince the verifier the following is correct,
+since it will be a common idiom for depending on the unpredictable enumeration ordering of a set:
 
 ```dafny
 function method SortedElements(s: set<int>): seq<int> 
@@ -502,82 +499,119 @@ may need to be added to the Dafny prelude.
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-Adding these building blocks to the Dafny language opens up a wide array of tempting new features.
+Adding these building blocks to the Dafny language opens up a wide array of tempting new features!
 
-## User-defined Collections
+## User-defined collections
 
-  * Already a concept in Dafny, but now possible to have user-implemented collections
-    * `Contains(t)`, which is used for `x in c` expressions
-      * Implies `T(0)`
-      * Default is `exists x | x in c :: x == t`
-
-## User-defined Enumerable and IEnumerable values
-
-  * Must define `Enumerator() returns Enumerator<T>`
-  * May define `Size()` to support `|c|`?
-    * Default is `|multiset x in c|`
-  * All finite enumerables are collections, and all finite collections are enumerable, but some infinite collections are not (only defining `in`)
-
-## User-defined Enumerator and IEnumerator implementations
-
-  * Must define `Next()`
-  * For `Enumerator`
-    * `T` must be failure-compatible
-    * Must define `Decreases()`
-
-* Implementing via an `iterator`
-* Adding chaining methods to Enumerator/Enumerable
-* Batch optimization of the above
-  * Requires allowing subclasses to override default implementations
+As discussed in the earlier [`for` loops RFC](https://github.com/dafny-lang/rfcs/pull/4), the semantics of
+`for` or `foreach` loops in many programming languages are defined in terms of "iterator" or "enumerator" objects. 
+The features proposed here only support builtin collections, but could easily be extended to support
+arbitrary Dafny types that provide a way to obtain an enumerator for their contents.
+[This PR](https://github.com/dafny-lang/libraries/pull/37) should be a good start towards designing
+the necessary interface. This is also likely the best way to provide a better user experience
+for looping or quantifying over the values produced by an `iterator` type.
 
 ## Short-form quantifier domains
 
-  * `x in c` ==> `x | x in c`
-  * `(k, v) in myMap.Items` ==> `k, v | (k, v) in myMap.Items`
-    * `k, v | k in m.Keys && m[k] == v` ==> `k in m.Keys && m[k] == v`
-  * In general: `<Expr>` ==> `<free variables in Expr> | <Expr>`
-  * Applies to comprehensions (seq, set, map) and quantifier expressions (forall, exists)
+This would be an independent syntactic sugar feature to avoid the repetition of bound variables in quantifier
+expressions and comprehensions. It would allow a loop such as:
+
+```dafny
+foreach x | x in mySeq {
+  ...
+}` 
+```
+
+to be shortened to:
+
+```dafny
+foreach x in mySeq
+```
+
+Or:
+
+```dafny
+foreach k, v | (k, v) in myMap.Items {
+  ...
+}
+```
+
+to:
+
+```dafny
+foreach (k, v) in myMap.Items {
+  ...
+}
+```
+
+In general, it would allow omitting the list of bound variables in a quantifier domain expression and instead automatically
+infer them from the list of free variables in the range expression.
 
 ## Unicode strings
 
-  * Both features provide an efficient way to iterate over values in an ordered collection that isn't efficiently random access
+As I have previously ranted about in https://github.com/dafny-lang/dafny/issues/413, the Dafny `string` type is currently an alias
+for `seq<char>`, where `char` is defined as a UTF-16 code units, and hence allows invalid sequences according to the semantics of
+Unicode. Modelling unicode correctly will involve specifying that the semantic contents of a UTF-8 string, for example, is
+a sequence of Unicode code points that is not efficiently accessed with indices. The features proposed here provide ways to work with
+such datatypes efficiently at runtime.
 
-## More flexible && enumeration
+## More flexible conjunction enumerations
 
-  * could generalize to say that domains have an ordering even if they are not enumerable, allow RHS to enumerate and then sort by LHS
+The proposed definition of domain ordering only allows the LHS of a conjunction to drive the primary enumeration,
+but this could be loosened to support enumerating via the RHS and only ordering according to the LHS.
+This would provide a succinct way to extract the values from a set in a fully predictable ordering, for example:
+
+```dafny
+var setOfReals := {3.141, 2.718, 1.618};
+var sortedList := seq x | x is real && x in setOfReals;
+assert sortedList == {1.618, 2.718, 3.141};
+```
+
 ## Array comprehensions
 
-* Avoids requiring the element type is auto-initializable
+The same syntax for sequence comprehensions could also be used for flexible array initialization,
+since this is another case where the user has to declare an ordered source of values:
 
-`var a := new int[10] i :: i * i;`
-`var a := new int[|s|] i :: s[i]`
-`var a := new int[] i | i in 0..10`
-  * SeqToArray helper method?
-  * Good way to dump a set into an array so you can sort it
-`var a := new int[10, 10] i, j :: i * j`
+```
+var a := new int[10] i :: i * i;
+var a := new int[|s|] i :: s[i];     // Where s is a seq<int>
+var a := new int[] i | 10 <= i < 20;
+```
+
+It would likely be prudent to limit these cases to those where the size of the domain
+is easy to infer statically, so that the size of the array to allocate is known before
+enumerating the values.
 
 ## Multiset comprehensions
 
-* Similar semantics as sequence comprehensions: counts the number of times a result is enumerated, but does not maintain ordering.
-* Almost free once you have sequence comprehensions implemented
+There would have similar semantics to sequence comprehensions, 
+where the multiplicity of results is significant but not the ordering.
+This feature would be very cheap to implement once sequence comprehensions are implemented.
 
-## Ranges as first-class values
+## Generalized comprehensions
 
-* Another kind of builtin collection
-* Allows `seq i | i in 0..10 :: f(i)`
+As shown above, sequence comprehensions are a powerfully expressive feature,
+but they can only express enumerating multiple values from a small number of source expressions, 
+and not the opposite direction of aggregating multiple values into one.
+The existing quantifier and comprehension expressions can be viewed as specific
+cases of aggregating multiple values into a single result value.
+An equally powerful feature would be to generalize this pattern and define
+a parameterized collection expression to aggregate a quantifier domain into
+a single value:
 
-## collect expressions?
+```dafny
+collect(&&) x: T | P(x) :: Q(x)         == forall x: T | P(x) :: Q(x)
+collect(||) x: T | P(x) :: Q(x)         == exists x: T | P(x) :: Q(x)
+collect(SeqBuilder) x: T | P(x) :: Q(x) == seq x: T | P(x) :: Q(x)
+collect(SetBuilder) x: T | P(x) :: Q(x) == set x: T | P(x) :: Q(x)
+collect(+) x: T | P(x) :: Q(x)          == (summation)
+collect(*) x: T | P(x) :: Q(x)          == (product)
+collect(<) x: T | P(x) :: Q(x)          == (minimum)
+collect(Averager) x: T | P(x) :: Q(x)   == (average)
+collect(First(n)) x: T | P(x) :: Q(x)   == Take(seq x: T | P(x) :: Q(x), n)
+...
+```
 
-* Comprehensions can express a lot, but not combining values
-* `exists x: T | P(x)` == `collect x: T :: P(x) to ||. false`
-* `forall x: T | P(x)` == `collect x: T :: P(x) to &&, true`
-* Might realistically depend on "operations" as first-class values somehow
-  * type class?
-  * Dual of enumerator, "aggregator"? "collector"?
-    * More like the dual of a collection
-  * Could just parameterize just by the intermediate type:
-    * `collect<Averager>`
-* `exists x: T | P(x) == collect(||) x: T :: P(x)`
-* `forall x: T | P(x) == collect(&&) x: T :: P(x)`
-* `var sum := collect(+) x: T :: P(x)`
-* `var avg := collect(Average) x: T :: P(x)`
+This mirrors the `Collector` concept from the Java streaming APIs, and ideally the shape of the
+parameter to `collect` expressions would define similar operations for merging intermediate results
+to leave the door open for parallel or even distributed computation.
