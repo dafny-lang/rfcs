@@ -329,7 +329,7 @@ such that building a set from all elements in the ordered enumeration results in
   * For an expression of the form `A && B`, the enumeration includes all bindings that satisfy both `A` and `B`. The enumeration ordering is defined by ordering first by `A`'s ordering and then by `B`'s, and the multiplicities of bindings is multiplied. See below for the pseudocode that calculates this enumeration.
     * This means that the `&&` operation is not fully symmetrical, but this is already true as verification considers it to be "short-circuiting": 
       `b != 0 && a/b > 1` is valid but `a/b > 1 && b != 0` is not.
-    * This definition is chosen such that the multiplicities of results from `A && B` is the same as `B && A`, even if the ordering is not the same. 
+    * This definition is chosen such that the multiplicities of results from `A && B` is the same as `B && A`, even if the ordering is not the same.
   * For an expression of the form `A || B`, the enumeration will simply produce the values enumerated by `A` followed by those enumerated by `B`.
   * If the context of an expression binds a variable that is not used in the expression, such as `seq x: bool | true`, 
     then the default ordering for the type of the variable is used (i.e. `[false, true]` in this case). 
@@ -375,10 +375,22 @@ seq | 1 in [2, 2] :: 42 == []
 
 ## Verification
 
-Translating sequence comprehensions to Boogie is *** TODO ***
+The optimal encoding of sequence comprehensions to Boogie is something of an open question:
+set comprehensions are encoded as their indicator predicates, but there is no such direct representation
+for sequence comprehensions as defined here. The initial encoding will likely be with a function,
+similar to the `Seq#Create` function used for set constructions, that accepts an indicator predicate.
+Axioms will be included to at least state that values are elements of a sequence comprehension iff
+they satisfy this predicate. This property is likely the most important to infer automatically,
+although it says nothing about the ordering or multiplicity of these values.
 
-The translation of `foreach` loops can be reduced to sequence comprehensions,
-as the semantics of such loops can be expressed as follows:
+Since `x | x in C && P(x)` where `C` is a sequence will be a very common pattern, it will likely be worthwhile
+to also include axioms for this pattern to encode the fact that elements in the result
+maintain their ordering from `C`, and that the length of the result and the multiplicities of values
+are all bounded from above by their analogues from `C`.
+
+The translation of `foreach` loops should be reducible to sequence comprehensions
+and other existing features for loops in general,
+as the semantics of such loops can usually be expressed as follows:
 
 ```dafny
 // A loop of this form:
@@ -393,6 +405,10 @@ for __i := 0 to |__s| {
   <Body>
 }
 ```
+
+This is not a complete equivalency as the domain of `foreach` loop with explicit `decreaes` clauses
+are allowed to be infinite. It may make sense to support encoding potentially infinite sequences in the Boogie prelude
+even if they are not (yet) supported in Dafny, to close this gap.
 
 ## Compilation
 
@@ -409,12 +425,12 @@ their internal representation may differ and hence their enumeration ordering ma
 Most if not all current Dafny compilers implement a Dafny `set<T>` with some variation on a hash set,
 which is generally a good default choice since this datatype offers constant-time access on average.
 Although different copies of the same set must place each value into the same hashing bucket, multiple
-values may be assigned to the same bucket, so it is necessary to use a secondary data structure of some kind for each bucket,
-and different implementations will use different options. A common simple approach is to maintain a linked list,
+values may be assigned to the same bucket, so it is necessary to use a secondary data structure of some kind for each bucket.
+A common simple approach is to use a linked list,
 in which case a single bucket will store elements in the order they were added and hence not meet the requirement
 of a deterministic ordering based only on the set of contained elements.
 
-One solution is to use a binary search tree as this secondary data structure instead, assuming that an ordering of
+One solution is to use a binary search tree as this secondary data structure instead, assuming that a total ordering of
 the elements of the type `T` is available. Some hash set implementations, such as recent versions of the Java `HashSet<T>` type,
 use a similar approach as an internal optimization when many hashing collisions occur, 
 so that the worst case runtime of lookups is O(N log N) rather than O(N).
@@ -454,8 +470,6 @@ with the former as a fallback that is inevitably more complicated to verify.
 # Prior art
 [prior-art]: #prior-art
 
-These features are largely and obviously inspired by the existing features in Dafny for quantification of one or more variables.
-
 Sequence comprehensions bear a strong resemblance to list comprehensions in Python, which also include similar abilities to 
 bind multiple variables and filter the enumerated values: `[(x, y) for x in [1,2,3] for y in [3,1,4] if x != y]`
 
@@ -466,6 +480,11 @@ of abstraction more amenable to verification: quantification expressions are use
 an operation that in spirit applies several such operations. See the "Future Possibilities" section for ideas for
 pushing this philosophy even further.
 
+The [JMatch language](https://www.cs.cornell.edu/andru/papers/padl03.pdf), an extension of Java to support
+pattern matching, includes a `foreach` loop remarkably similar to the proposal here: it is parameterized by
+a boolean expression and iterates through all matching bindings. For example, the statement `foreach(a[int i] != 0) n += i;`
+sums the indices of all non-zero elements of the array `a`. The JMatch version declares the bound variables inline in
+the boolean expression, which is also proposed here as a future possibility below.
 
 * JMatch! https://www.cs.cornell.edu/andru/papers/padl03.pdf
 
@@ -513,7 +532,7 @@ for looping or quantifying over the values produced by an `iterator` type.
 
 ## Short-form quantifier domains
 
-This would be an independent syntactic sugar feature to avoid the repetition of bound variables in quantifier
+This would be independent syntactic sugar to avoid the repetition of bound variables in quantifier
 expressions and comprehensions. It would allow a loop such as:
 
 ```dafny
