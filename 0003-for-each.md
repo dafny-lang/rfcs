@@ -1,6 +1,6 @@
 - Feature Name: for_each_loops
 - Start Date: 2022-02-22 (twosday!)
-- RFC PR: [dafny-lang/rfcs#0000](https://github.com/dafny-lang/rfcs/pull/0000)
+- RFC PR: [dafny-lang/rfcs#9](https://github.com/dafny-lang/rfcs/pull/9)
 - Dafny Issue: [dafny-lang/dafny#1753](https://github.com/dafny-lang/dafny/issues/1753)
 
 # Summary
@@ -485,8 +485,6 @@ pattern matching, includes a `foreach` loop remarkably similar to the proposal h
 a boolean expression and iterates through all matching bindings. For example, the statement `foreach(a[int i] != 0) n += i;`
 sums the indices of all non-zero elements of the array `a`. The JMatch version declares the bound variables inline in
 the boolean expression, which is also proposed here as a future possibility below.
-
-* JMatch! https://www.cs.cornell.edu/andru/papers/padl03.pdf
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
