@@ -1,12 +1,17 @@
-- Feature Name: sequence_comprehensions
-- Start Date: 2022-05-10
+- Feature Name: ordered_quantification
+- Start Date: 2022-02-22 (twosday!)
 - RFC PR: [dafny-lang/rfcs#9](https://github.com/dafny-lang/rfcs/pull/9)
 - Dafny Issue: [dafny-lang/dafny#1753](https://github.com/dafny-lang/dafny/issues/1753)
 
 # Summary
 [summary]: #summary
 
-This RFC proposes adding generalized sequence comprehension expressions, similar to the existing `set` and `map` comprehension expressions and more flexible than the current `seq(5, i => i*i)` form.
+This RFC proposes adding two closely-related new features to Dafny for working with collections and iteration:
+
+1. `foreach` loops over any enumerable domain, initially only supporting the builtin collection types but leaving the door open for user-defined collections.
+2. Generalized sequence comprehension expressions, similar to the existing `set` and `map` comprehension expressions and more flexible than the current `seq(5, i => i*i)` form.
+
+These features both build on the fundamental new concept of *ordered quantification*, and their syntax and semantics overlap substantially.
 
 # Motivation
 [motivation]: #motivation
@@ -32,10 +37,8 @@ method AllPairs(s: seq<nat>) returns (result: seq<(nat, nat)>) {
 
 // After:
 method AllPairs(s: seq<nat>) returns (result: seq<(nat, nat)>) {
-  foreach left <- s {
-    foreach right <- s {
-      result := result + (left, right);
-    }
+  foreach left <- s, right <- s {
+    result := result + (left, right);
   }
 }
 
@@ -60,10 +63,9 @@ while ss != {}
 }
 ```
 
-This is functionally correct, but because set subtraction requires creating a fresh copy,
-when compiled this loop requires quadratic time and memory (or at least garbage-collection work) in the size of the set.
-The only way to avoid this cost is to write additional external code in the target language to interface directly with the
-internal runtime implementation of `set` values.
+This is functionally correct, but in the current compiler and runtimes takes quadratic time.
+https://github.com/dafny-lang/dafny/issues/2062 contains a more in-depth exploration of this issue;
+the overall conclusion is that improving the situation through optimization is risky and expensive.
 
 By comparison, the equivalent `foreach` loop is:
 
@@ -77,30 +79,79 @@ The runtime implementation of this loop can use the native iteration features of
 
 Going further, it is better to avoid writing any imperative loop at all where possible. Sticking to immutable data and
 expressions rather than statements allows logic to be used in specifications as well as implementation,
-and reduces the burden on the Dafny verifier. The proposed sequence comprehension expression allows more
+and reduces the effort Dafny users have to spend on proving their code correct. The proposed sequence comprehension expression allows more
 logic that ultimately produces a sequence of values to be expressed as a value rather than a statement.
-Just producing a sequence of the values in a set is simple using a sequence comprehension expression: `seq i <- s`.
+Just producing a sequence of the values in the set above, sorted by the natural ordering of `int` values,
+is simple using a sequence comprehension expression: `seq i: int | i in s`.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-Although sequence comprehensions are the main feature this RFC proposes, they depend on another new and more
-more fundamental concept: quantifier domain ordering. Therefore, allow me to outline this concept first before then
-describing sequence comprehensions.
+Both of the proposed new features depend on another new and more fundamental concept: quantification ordering. 
+Therefore, allow me to outline this concept first before then describing `foreach` loops and sequence comprehensions.
 
-## Quantifier domain ordering
+## Quantification ordering
 
-TODO
+This concept augments the existing common syntax for quantifier domains with a notion of ordering, and allows quantified variables to
+bind to duplicate values. The key points are:
 
-There will be two cases for determining this ordering, and others could potentially be added in the future:
+* Any quantifier domain defines a potentially infinite, partially-ordered set of *quantifier bindings*.
+* The quantified variable declarations define the values each binding maps to each variable, AND how these bindings are ordered.
+* The range expression after the `|` restricts the quantification to a subset of these bindings, but does not influence their ordering.
+* A quantifier domain only guarantees an ordering of bindings, but is NOT prescriptive on how to enumerate this domain at runtime, if it is compiled!
+  This is consistent with existing expressions such as `set x: real | x in mySet && P(x)`: although the unfiltered domain of `real` values is not
+  enumerable, the bound `x in mySet` is, and at runtime this set is calculated by enumerating the contents of `mySet` and filtering out values
+  that do not satisfy `P(x)`. The new features that are affected by quantification ordering will behave similarly: `seq x: real | x in mySet && P(x)`
 
-1. 
+There will be three supported *quantifier variable declaration* cases for determining this ordering, and others could potentially be added in the future:
 
-Note that this concept and the new `<-` syntax applies to any use of quantifiers, even though ordering and multiplicity
-is irrelevant for all current uses: the semantics of `set` and `map` comprehensions, `forall` and `exists` expressions, 
-and `forall` statements all do not depend on the order of quantification. This syntax does offer a more efficient
-expression of common uses of these features, however: `set x <- s :: x + 2` is equivalent to
-`set x | x in s :: x + 2`, for example.
+1. `x [: T]`
+
+    In the existing syntax for quantified variables (where the type `T` may be explicitly provided or omitted and inferred),
+    the quantification bindings will be ordered according to the *natural ordering* of the type `T`. Not all Dafny types will
+    have such a natural ordering defined, but at a minimum `int` and `real`, and any subset type or newtype based on them,
+    will use the natural mathematical ordering. `x: int | x in {2, 5, 3}`, for example, would bind x to `2`, `3`, and `5` in that order.
+
+2. `x [: T] <- C` 
+
+    In this new syntax, the quantification bindings will be defined and ordered according to the expression `C`, which must be a collection. Initially only the builtin collection types (`set`, `multiset`, `map` and `seq`) will be supported, but support for user-defined collection types will be possible in the future. If `C` is a `map`, the bound values will be the keys of the `map`, in order to be consistent with the meaning of `x in C`; `map.Items` should be used instead to bind key-value pairs. 
+    Unlike the first case, this syntax may produce duplicate bindings. The ordering of bindings is non-deterministic unless `C` is a sequence.
+    If `C` is a `multiset`, multiple bindings with the same value of `x` will be created, but their ordering is still non-deterministic.
+
+    The `<-` symbol would be read as "from", so a statement like `foreach x <- C { ... }` would be read as "for each x from C ...". Note that `<-` is not an independent operator and is intentionally distinct from the `in` boolean operator.
+
+    The expression `C` is allowed to depend on quantifier variables declared in earlier clauses, such as `x <- C, y <- x`.
+
+3. `<CasePatternLocal> <- C`
+
+    This is a generalization of the previous case that supports pattern matching, as in variable declaration and match statements.
+    It allows destructuring datatypes and tuples, as in `(k, v) <- myMap.Items`, and filtering, as in `Some(x) <- mySetOfOptionals`.
+
+A single quantifier domain may include multiple such clauses separated by commas, in which case the orderings described for each clause take
+lexicographic precedence. The domain `x <- [1, 2], y <- [3, 4]` will therefore specify the following bindings in that order:
+
+1.  `x == 1, y == 3`
+1.  `x == 1, y == 4`
+1.  `x == 2, y == 3`
+1.  `x == 2, y == 4`
+
+The syntax for quantifier domains will therefore become:
+
+QuantifierVarDecl ::=
+  Ident [":" Type]
+  | Ident [":" Type] "<-" Expression
+  | CasePatternLocal "<-" Expression
+
+QuantifierDomain ::=
+  QuantifierVarDecl 
+  { "," QuantifierVarDecl }
+  [ "|" Expression ]
+
+Note that this concept and the new `<-` syntax applies to any use of quantifier domains, even though ordering and multiplicity
+is irrelevant for all current uses: the semantics of `[i]set` and `map` comprehensions, `forall` and `exists` expressions, 
+and `forall` statements all do not depend on the order of quantification and semantically ignore duplicates. 
+This syntax does offer a more efficient expression of common uses of these features, however: `set Some(x) <- s` is equivalent to
+`set x | x in s && x.Some? :: x.value`, for example.
 
 ## foreach Loops
 
@@ -171,11 +222,9 @@ foreach x: nat
 }
 ```
 
-TODO: Not correct any more, C has to be a deterministically ordered collection for now (?).
 Most `foreach` loops will take the form `foreach x <- C { ... }`, where `C` is a `seq`, `set` or `multiset`.
 This includes expressions like `m.Keys`, `m.Values` and `m.Items` when `m` is a `map`.
-Looping over the keys and values of a map is particularly readable and aesthetically pleasing with this syntax,
-which also makes it easier for the compiled program to avoid unnecessary intermediate tuple values:
+Looping over the keys and values of a map is particularly clean with this syntax:
 
 ```dafny
 foreach (k, v) <- m.Items {
