@@ -1,6 +1,6 @@
 - Feature Name: ordered_quantification
 - Start Date: 2022-02-22 (twosday!)
-- RFC PR: [dafny-lang/rfcs#9](https://github.com/dafny-lang/rfcs/pull/10)
+- RFC PR: [dafny-lang/rfcs#10](https://github.com/dafny-lang/rfcs/pull/10)
 - Dafny Issue: [dafny-lang/dafny#1753](https://github.com/dafny-lang/dafny/issues/1753)
 
 # Summary
