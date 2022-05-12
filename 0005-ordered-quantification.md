@@ -120,6 +120,7 @@ There will be three supported variable declaration styles, and others could pote
 2. `x [: T] <- C` 
 
     In this new syntax, the bindings will be defined and ordered according to the expression `C`, which must be a collection. Initially only the builtin collection types (`set`, `multiset`, `map`, and `seq`) will be supported, but support for user-defined collection types will be possible in the future. If `C` is a `map`, the bound values will be the keys of the `map`, in order to be consistent with the meaning of `x in C`; `map.Items` should be used instead to bind key-value pairs. 
+
     Unlike the first case, this syntax may produce duplicate bindings. The ordering of bindings is non-deterministic unless `C` is a sequence.
     If `C` is a `multiset`, multiple bindings with the same value of `x` will be created, but their ordering is still non-deterministic.
 
@@ -203,7 +204,8 @@ More specifically, this expands to:
 ```
 ForeachLoop ::=
   "foreach" 
-  QuantifierVarDecl { "," QuantifierVarDecl } [ "|" Expression ]
+  QuantifierVarDecl { "," QuantifierVarDecl } 
+  [ "|" Expression ]
   { InvariantDecl | ModifiesDecl | DecreasesDecl }
   [ BlockStmt ]
 ```
@@ -267,7 +269,7 @@ It is straightforward to track these values manually, however:
 
 ```dafny
 ghost var xs := [];
-foreach x in s {
+foreach x <- s {
   ...
   xs := xs + [x];
 }
@@ -276,7 +278,7 @@ foreach x in s {
 It is even possible to attach this ghost state directly to the sequence with a helper function:
 
 ```dafny
-foreach (x, xs) in WithPrefixes(c) {
+foreach (x, xs) <- WithPrefixes(c) {
   ...
 }
 ```
@@ -292,7 +294,7 @@ function method WithPrefixes<T>(s: seq<T>): seq<(T, ghost seq<T>)> {
 Similarly, a helper function can be provided to maintain a running index of the enumerated values:
 
 ```dafny
-foreach (x, i) in WithIndexes(s) {
+foreach (x, i) <- WithIndexes(s) {
   ...
 }
 
@@ -310,7 +312,8 @@ A sequence comprehension has identical syntax to a set comprehension, except tha
 ```
 SeqComprehension ::=
   "seq" 
-  QuantifierVarDecl { "," QuantifierVarDecl } "|" Expression
+  QuantifierVarDecl { "," QuantifierVarDecl } 
+  "|" Expression
   [ :: Expression ]
 ```
 
@@ -356,10 +359,7 @@ TODO:
 As mentioned in the guide-level explanation, `foreach` loops and sequence comprehensions are both able to
 borrow concepts and implementation substantially from other features. Parsing, resolving, verifying, and compiling
 quantifier domains is already a mature aspect of the Dafny implementation. The most significant implementation burden
-is ensuring that enumeration ordering is deterministic. The existing compilation logic for enumerating a domain
-treats this ordering as pure implementation detail, and applies heuristic optimizations to try to make the search as short
-as possible. Ensuring consistent ordering is an additional constraint on this logic, applied only when the surrounding context
-is a sequence comprehension or `foreach` loop.
+is ensuring that enumeration ordering is deterministic. 
 
 ## Verification
 
@@ -405,6 +405,12 @@ even if they are not (yet) supported in Dafny, to close this gap.
 TODO:
 
 * Blah blah bounded pools
+
+The existing compilation logic for enumerating a domain
+treats this ordering as pure implementation detail, and applies heuristic optimizations to try to make the search as short
+as possible. Ensuring consistent ordering is an additional constraint on this logic, applied only when the surrounding context
+is a sequence comprehension or `foreach` loop.
+
 * Compilation already has an internal foreach-like concept. Having foreach loops in the language
   means this can be one of many lowering transformations in the future.
 
