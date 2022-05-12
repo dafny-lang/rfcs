@@ -441,6 +441,22 @@ One benefit to adding `foreach` loops to Dafny is that this logic can be refacto
 phase, rewriting quantification of many kinds to explicit `foreach` loop AST nodes, which can then be translated to
 target languages constructs in later phases.
 
+# Implementation plan
+
+This RFC proposes a lot of functionality, which can be delivered in multiple smaller phases:
+
+1. Sequence comprehensions for a single quantified variable with a sequence source, only usable in ghost code.
+   1. Depends on at least minimal support for ordered quantification.
+   2. Ensures verification is effective before moving on to other derived features.
+2. Compiling sequence comprehensions.
+3. Other source collection types (`set`, `multiset`, etc.)
+4. Declaring quantifier variables using pattern matching.
+5. Multiple quantifier variables.
+6. `foreach` loops.
+7. etc.
+
+It may even be possible to implement multiple extensions in parallel.
+
 # Drawbacks
 [drawbacks]: #drawbacks
 
