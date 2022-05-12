@@ -104,7 +104,6 @@ We can augment this existing syntax with a notion of ordering, and allow quantif
 * The quantified variable declarations define the values each binding maps to each variable, AND how these bindings are ordered.
 * The range expression after the `|` restricts the quantification to a subset of these bindings, but does not influence their ordering.
 
-
 A quantifier domain only guarantees an ordering of bindings, 
 but is NOT prescriptive on how to enumerate this domain at runtime, if it is compiled!
 This is consistent with existing expressions such as `set x: real | x in myFiniteSet && P(x)`: 
@@ -256,7 +255,7 @@ possible values of the types of the bound variables. This is only permitted if a
 are enumerable, which is not true of the `real` type, for example. This supports an elegant
 pattern for mapping over simple datatypes and other types with few values, including subset types.
 
-```
+```dafny
 datatype Suit = Clubs | Diamonds | Hearts | Spades
 
 foreach s: Suit {
@@ -274,8 +273,8 @@ foreach i: SmallIndex {
 }
 ```
 
-There will not initially be any builtin support for automatically tracking the enumerated values so far, as there is for
-`iterator` values (see https://dafny-lang.github.io/dafny/DafnyRef/DafnyRef#sec-iterator-types). 
+There will not initially (see Open Questions) be any builtin support for automatically tracking the enumerated values so far, 
+as there is for `iterator` values (see https://dafny-lang.github.io/dafny/DafnyRef/DafnyRef#sec-iterator-types). 
 It is straightforward to track these values manually, however:
 
 ```dafny
@@ -378,7 +377,7 @@ pre-condition to a lambda expression, as this issue highlights: https://github.c
 As mentioned in the guide-level explanation, `foreach` loops and sequence comprehensions are both able to
 borrow concepts and implementation substantially from other features. Parsing, resolving, verifying, and compiling
 quantifier domains is already a mature aspect of the Dafny implementation. The most significant implementation burden
-is ensuring that enumeration ordering is deterministic in contexts where it needs to be. 
+is ensuring that enumeration ordering is threaded through, and deterministic in contexts where it needs to be. 
 
 ## Verification
 
@@ -425,12 +424,13 @@ The existing resolution logic for quantified domains in Dafny applies heuristics
 conjuncts in the range expression that define a bounded, potentially-enumerable set of values. The 
 [`BoundedPool`](https://github.com/dafny-lang/dafny/blob/master/Source/Dafny/AST/DafnyAst.cs#L11487) type is used
 to represent these cases, and models common patterns such as `0 <= i < n` (`IntBoundedPool`),
-`x in s` (`CollectionBoundedPool`), and enum-like datatypes with no parameterized constructors (`DatatypeBoundedPool`).
+`x in s` (`CollectionBoundedPool`), enum-like datatypes with no parameterized constructors (`DatatypeBoundedPool`),
+and `x == C` (`ExactBoundedPool`).
 Different bounded pool types have different "virtues", including whether or not they are finite or enumerable.
 In compiled contexts, Dafny will produce an error if it cannot identify at least one enumerable bound.
 
 To support ordered quantification, this mechanism will be extended to include tracking the ordering these pools 
-will enumerate values with. The `x <- C` syntax will be another potential `CollectionBoundedPool` source, and usually one that encodes
+will enumerate values with. The `x <- C` syntax will be another potential `CollectionBoundedPool` source, and often one that encodes
 an explicit enumeration order. The existing compilation logic treats ordering as pure implementation detail, 
 and applies optimizations to try to make the search as short as possible. Ensuring consistent ordering is an additional 
 constraint on this logic, applied only when the surrounding context is a sequence comprehension or `foreach` loop.
@@ -517,6 +517,14 @@ a set, there doesn't seem to be as direct a way to express the sorted sequence o
 sequence or multiset, since the plain `i` declaration implies a natural ordering, which doesn't allow
 duplicates. This could also be addressed by the above idea of customizing the ordering, if
 `seq i <- mySeq by <` was allowed.
+
+Tracking the values enumerated so far and/or the number of iterations in a `foreach` loop
+is possible with manual helper functions as illustrated above, but only when the source collection is a sequence.
+It may be a good idea in the next iteration of the feature to have convenient mechanisms for this,
+if they are frequently requested. They may be best addressed when adding support for 
+user-defined collection types and enumerators instead. Another possibility is supporting
+parallel orderings as in Cryptol or Haskell, such that indexing an arbitrary collections could be expressed as
+`seq x <- s (some symbol) i <- (0 to *) :: (s, i)`, but I don't see an obvious choice of syntax.
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
