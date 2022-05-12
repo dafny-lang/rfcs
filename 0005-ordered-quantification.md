@@ -80,7 +80,8 @@ The runtime implementation of this loop can use the native iteration features of
 
 Going further, it is better to avoid writing any imperative loop at all where possible. Sticking to immutable data and
 expressions rather than statements allows logic to be used in specifications as well as implementation,
-and reduces the effort Dafny users have to spend on proving their code correct. The proposed sequence comprehension expression allows more
+and reduces the effort Dafny users have to spend on proving their code correct.
+The proposed sequence comprehension expression allows more
 logic that ultimately produces a sequence of values to be expressed as a value rather than a statement.
 Just producing a sequence of the values in the set above, sorted by the natural ordering of `int` values,
 is simple using a sequence comprehension expression: `seq i: int | i in s`.
@@ -102,11 +103,17 @@ We can augment this existing syntax with a notion of ordering, and allow quantif
 * Any quantifier domain defines a potentially-infinite, partially-ordered set of *quantifier bindings*.
 * The quantified variable declarations define the values each binding maps to each variable, AND how these bindings are ordered.
 * The range expression after the `|` restricts the quantification to a subset of these bindings, but does not influence their ordering.
-* A quantifier domain only guarantees an ordering of bindings, but is NOT prescriptive on how to enumerate this domain at runtime, if it is compiled!
-  This is consistent with existing expressions such as `set x: real | x in myFiniteSet && P(x)`: although the unfiltered domain of `real` values is not
-  enumerable, the bound `x in myFiniteSet` is, and at runtime this set is calculated by enumerating the contents of `myFiniteSet` and filtering out values
-  that do not satisfy `P(x)`. The new features that are affected by quantification ordering will behave similarly: `seq x: real | x in mySet && P(x)`
-  is calculated via the same filtered enumeration, but collected into a sorted sequence instead.
+
+
+A quantifier domain only guarantees an ordering of bindings, 
+but is NOT prescriptive on how to enumerate this domain at runtime, if it is compiled!
+This is consistent with existing expressions such as `set x: real | x in myFiniteSet && P(x)`: 
+although the unfiltered domain of `real` values is not enumerable, the bound `x in myFiniteSet` is, 
+and at runtime this comprehension is calculated by enumerating the contents of `myFiniteSet` 
+and filtering out values that do not satisfy `P(x)`. 
+The new features that are affected by quantification ordering will behave similarly: 
+`seq x: real | x in mySet && P(x)` is calculated via the same filtered enumeration, 
+but collected into a sorted sequence instead.
 
 There will be three supported variable declaration styles, and others could potentially be added in the future:
 
@@ -115,24 +122,27 @@ There will be three supported variable declaration styles, and others could pote
     In the existing syntax for quantifier variables (where the type `T` may be explicitly provided or omitted and inferred),
     the bindings will be ordered according to the *natural ordering* of the type `T`. Not all Dafny types will
     have such a natural ordering defined, but at a minimum `int` and `real`, and any subset type or newtype based on them,
-    will use the natural mathematical ordering. `x: int | x in {2, 5, -4}`, for example, would bind x to `-4`, `2`, and `5` in that order.
+    will use the natural mathematical ordering.
+    `x: int | x in {2, 5, -4}`, for example, would bind `x` to `-4`, `2`, and `5` in that order.
 
 2. `x [: T] <- C` 
 
-    In this new syntax, the bindings will be defined and ordered according to the expression `C`, which must be a collection. Initially only the builtin collection types (`set`, `multiset`, `map`, and `seq`) will be supported, but support for user-defined collection types will be possible in the future. If `C` is a `map`, the bound values will be the keys of the `map`, in order to be consistent with the meaning of `x in C`; `map.Items` should be used instead to bind key-value pairs. 
+    In this new syntax, the bindings will be defined and ordered according to the expression `C`, which must be a collection. Initially only the builtin collection types (`[i]set`, `multiset`, `[i]map`, and `seq`) will be supported, but support for user-defined collection types will be possible in the future. If `C` is a `map`, the bound values will be the keys of the `map`, in order to be consistent with the meaning of `x in C`; `map.Items` should be used instead to bind key-value pairs. 
 
-    Unlike the first case, this syntax may produce duplicate bindings. The ordering of bindings is non-deterministic unless `C` is a sequence.
+    Unlike the first case, this syntax may produce duplicate bindings. 
+    The ordering of bindings is non-deterministic unless `C` is a sequence.
     If `C` is a `multiset`, multiple bindings with the same value of `x` will be created, but their ordering is still non-deterministic.
 
-    The `<-` symbol would be read as "from", so a statement like `foreach x <- C { ... }` would be read as "for each x from C ...". Note that `<-` is not an independent operator and is intentionally distinct from the `in` boolean operator.
+    The `<-` symbol would be read as "from", so a statement like `foreach x <- C { ... }` would be read as "for each x from C, ...". Note that `<-` is not an independent operator and is intentionally distinct from the `in` boolean operator.
 
 3. `<CasePatternLocal> <- C`
 
     This is a generalization of the previous case that supports pattern matching, as in variable declarations and match statements.
     It allows destructuring datatypes and tuples, as in `(k, v) <- myMap.Items`, and filtering, as in `Some(x) <- mySetOfOptionals`.
 
-A single quantifier domain may include multiple such declarations separated by commas, in which case the orderings described for each clause take
-lexicographic precedence. The domain `x <- [1, 2], y <- [3, 4]` will therefore specify the following bindings in this order:
+A single quantifier domain may include multiple such declarations separated by commas, 
+in which case the orderings described for each clause take lexicographic precedence. 
+The domain `x <- [1, 2], y <- [3, 4]` will therefore specify the following bindings in this order:
 
 1.  `x == 1, y == 3`
 1.  `x == 1, y == 4`
@@ -140,7 +150,7 @@ lexicographic precedence. The domain `x <- [1, 2], y <- [3, 4]` will therefore s
 1.  `x == 2, y == 4`
 
 In addition, collection expressions used in declarations are permitted to refer to variables declared in previous declarations.
-The domain `x <- [[1, 2], [3, 4], y <- x` will therefore produce these bindings:
+The domain `x <- [[1, 2], [3, 4], y <- x` therefore produces these bindings:
 
 1.  `x == [1, 2], y == 1`
 1.  `x == [1, 2], y == 2`
@@ -226,17 +236,18 @@ foreach x: real | 0.0 <= x < 1.0 {  // Error: ...
 
 The quantifier domain is allowed to be potentially infinite if the loop is used in a compiled context and an explicit `decreases` clause is provided.
 `decreases *` is permitted, in which the `foreach` loop may never terminate. Any other `decreases` clause can be provided
-to ensure the loop terminates even if the domain is potentially infinite. The following (slightly bizarre) example is legal:
-
-TODO: better example. Perhaps convince 
+to ensure the loop terminates even if the domain is potentially infinite. For example, the following (very slow) example collects
+five arbitrary primes (assuming that Dafny can figure out how to enumerate the `allPrimes` infinite set):
 
 ```dafny
-foreach x: nat 
-  invariant x <= 10
-  decreases 10 - x
+var allPrimes := iset n | !exists i, j | 1 < i <= j < n :: i * j == n;
+var fivePrimes := {};
+foreach p <- allPrimes
+  invariant |fivePrimes| <= 5
+  decreases 5 - |fivePrimes|
 {
-  print x, "\n";
-  if x == 10 { break; }
+  if |fivePrimes| == 5 { break; }
+  fivePrimes := fivePrimes + [x];
 }
 ```
 
@@ -263,7 +274,7 @@ foreach i: SmallIndex {
 }
 ```
 
-There is no builtin support for automatically tracking the enumerated values so far, as there is for
+There will not initially be any builtin support for automatically tracking the enumerated values so far, as there is for
 `iterator` values (see https://dafny-lang.github.io/dafny/DafnyRef/DafnyRef#sec-iterator-types). 
 It is straightforward to track these values manually, however:
 
@@ -330,7 +341,7 @@ var filtered: seq<T> := seq Some(x) <- s;
 var a: seq<T> := ...;
 var b: seq<T> := ...;
 assert |a| == |b|;
-var zipped := seq i | 0 <= i < |a| :: (a[i], b[i])
+var zipped := seq i | 0 <= i < |a| :: (a[i], b[i]);
 
 // Map and then flatten (a.k.a. "FlatMap")
 var c: seq<S> := ...;
@@ -342,8 +353,18 @@ var setOfReals := {3.141, 2.718, 1.618};
 var sortedList := seq x | x in setOfReals;
 assert sortedList == {1.618, 2.718, 3.141};
 
-TODO: manual collection operations like intersection of two sequences
+// Intersection of sequences
+var a := [4, 1, 3, 5];
+var b := [3, 1, 7];
+assert (seq x <- a | x in b) == [1, 3];
+assert (seq x <- b | x in a) == [3, 1];
 ```
+
+Since sequence comprehensions are expressions rather than statements, they carry an additional restriction
+when used in functions: their ordering must be fully deterministic. If `s` is a `set<int>`, for example,
+`seq x <- s` would be rejected in specification contexts, whereas `seq x | x in s` would be allowed.
+This is very similar to the restriction on `:|` let-such-that expressions, which is not relevant for equivalent
+`:|` assign-such-that statements.
 
 Note that the existing `seq(size, i => i + 1)` syntax is inconsistently-named in the Dafny reference manual, 
 but we refer to it here as a "sequence construction" expression, to disambiguate it from the proposed sequence comprehension feature.
@@ -354,19 +375,17 @@ pre-condition to a lambda expression, as this issue highlights: https://github.c
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-TODO:
-
 As mentioned in the guide-level explanation, `foreach` loops and sequence comprehensions are both able to
 borrow concepts and implementation substantially from other features. Parsing, resolving, verifying, and compiling
 quantifier domains is already a mature aspect of the Dafny implementation. The most significant implementation burden
-is ensuring that enumeration ordering is deterministic. 
+is ensuring that enumeration ordering is deterministic in contexts where it needs to be. 
 
 ## Verification
 
 The optimal encoding of sequence comprehensions to Boogie is something of an open question:
 set comprehensions are encoded as their indicator predicates, but there is no such direct representation
 for sequence comprehensions as defined here. The initial encoding will likely be with a function,
-similar to the `Seq#Create` function used for seq constructions, that accepts an indicator predicate.
+similar to the `Seq#Create` function used for seq constructions, that accepts a source sequence and indicator predicate.
 The useful axioms about these values will fall into three categories, sketched below for the simple
 case of comprehensions with a single variable bound from a sequence and no explicit term:
 
@@ -402,46 +421,72 @@ even if they are not (yet) supported in Dafny, to close this gap.
 
 ## Compilation
 
-TODO:
+The existing resolution logic for quantified domains in Dafny applies heuristics to identify
+conjuncts in the range expression that define a bounded, potentially-enumerable set of values. The 
+[`BoundedPool`](https://github.com/dafny-lang/dafny/blob/master/Source/Dafny/AST/DafnyAst.cs#L11487) type is used
+to represent these cases, and models common patterns such as `0 <= i < n` (`IntBoundedPool`),
+`x in s` (`CollectionBoundedPool`), and enum-like datatypes with no parameterized constructors (`DatatypeBoundedPool`).
+Different bounded pool types have different "virtues", including whether or not they are finite or enumerable.
+In compiled contexts, Dafny will produce an error if it cannot identify at least one enumerable bound.
 
-* Blah blah bounded pools
+To support ordered quantification, this mechanism will be extended to include tracking the ordering these pools 
+will enumerate values with. The `x <- C` syntax will be another potential `CollectionBoundedPool` source, and usually one that encodes
+an explicit enumeration order. The existing compilation logic treats ordering as pure implementation detail, 
+and applies optimizations to try to make the search as short as possible. Ensuring consistent ordering is an additional 
+constraint on this logic, applied only when the surrounding context is a sequence comprehension or `foreach` loop.
 
-The existing compilation logic for enumerating a domain
-treats this ordering as pure implementation detail, and applies heuristic optimizations to try to make the search as short
-as possible. Ensuring consistent ordering is an additional constraint on this logic, applied only when the surrounding context
-is a sequence comprehension or `foreach` loop.
-
-* Compilation already has an internal foreach-like concept. Having foreach loops in the language
-  means this can be one of many lowering transformations in the future.
+Each target language compiler already implements methods such as `CreateForEachLoop` to emit the implementation of
+iterating over a particular `BoundedPool`.
+One benefit to adding `foreach` loops to Dafny is that this logic can be refactored as a pure lowering translation
+phase, rewriting quantification of many kinds to explicit `foreach` loop AST nodes, which can then be translated to
+target languages constructs in later phases.
 
 # Drawbacks
 [drawbacks]: #drawbacks
 
 The primary drawback to this proposal is the burden of adding the new concept of quantification ordering. 
 This means extra cognitive load for Dafny users, extra implementation effort for any new builtin collection types, 
-and additional testing to ensure that all supported quantification domains are deterministically enumerable.
+and additional testing to ensure that quantification domains are deterministically enumerable when required.
+
+The bounded pool heuristics described above are necessary in order to support compiling expressions such as set
+comprehensions that are not computable in general. They come with the downside that it is less obvious to Dafny
+programmers how their code will behave at runtime, and hence these new features come with
+the same downside. Dafny is free to implement an expression like `seq x <- a | x in b` by either enumerating the values
+of `a` and skipping those not in `b`, or by sorting the elements of `b` according to the ordering in `a`. This flexibility
+is excellent for future optimizations, but makes it harder to reason about runtime performance.
 
 It can be argued that if any compiled Dafny program uses existing features that depend on domain enumeration,
 such as `exists` expressions or `:|` statements, its runtime behavior already depends heavily on how this domain
 searching is implemented. The compiler only enforces that such domains are finite and enumerable, but an inefficient
 choice can lead to the search for a matching value taking orders of magnitude more time than expected.
-Therefore we should already be documenting this aspect of Dafny semantics and implementation better anyway.
+Therefore we should already be documenting this aspect of Dafny semantics and implementation better anyway, potentially
+including communicating this through the IDE.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-TODO
+The most obvious alternative is to only provide the simpler `foreach x <- C` syntax, with only a single bound variable,
+no additional filtering, and with `C` directly providing the enumeration and not just the ordering of values.
+This is certainly a well-formed and sound construct, but far less powerful than the proposed version, especially
+when sequence comprehensions are excluded. Offering `foreach` loops along with sequence comprehensions means we can 
+recommend the latter where possible, with the former as a fallback that is inevitably more complicated to verify.
 
 # Prior art
 [prior-art]: #prior-art
 
 Sequence comprehensions bear a strong resemblance to list comprehensions in Python, which also include similar abilities to 
-bind multiple variables and filter the enumerated values: `[(x, y) for x in [1,2,3] for y in [3,1,4] if x != y]`
+bind multiple variables and filter the enumerated values: `[(x, y) for x in [1,2,3] for y in [3,1,4] if x != y]`.
+Haskell and Cryptol also feature similar constructs.
+
+Although the syntax `for[each] x in c` is more common, there is precedent for using the symbol `<-` instead in other languages,
+including Scala, Cryptol, and Haskell. Using something other than `in` is recommended to avoid confusion with the `in` boolean operator,
+but I don't have a strong opinion about which symbol or keyword we use.
 
 Most mainstream programming languages include rich libraries for working with collections and iterators,
 and define much the same operations such as "filter" and "flatMap".
 The proposed Dafny features provide similar functionality at a higher level
-of abstraction more amenable to verification: quantification expressions are used to succinctly declare the behavior of
+of abstraction that will require less effort from Dafny programmers to successfully verify: 
+quantification expressions are used to succinctly declare the behavior of
 an operation that in spirit applies several such operations. See the "Future Possibilities" section for ideas for
 pushing this philosophy even further.
 
@@ -453,19 +498,25 @@ sums the indices of all non-zero elements of the array `a`.
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-TODO:
+It is very convenient to support ordered quantification over the natural ordering of types, but
+Dafny's choice of built-in ordering concepts is currently somewhat surprising. Historical, Dafny has biased towards
+defining well-founded orderings to support proofs of termination rather than intuitive orderings
+users would expect. For example, `<` on datatypes is defined as "rank comparison", such that `Some(x) < Some(Some(x))`.
+For strings (and more generally sequences), `<` means "proper prefix of", and the well-founded ordering is
+"subsequence of", and neither is the lexicographic comparison users would expect.
+As a somewhat orthogonal improvement, we may want to make breaking changes to the language to align `<` with
+typical programmer expectations and the "natural ordering" concept, as well as defining a separate operator
+for the well-founded orderings (see https://github.com/dafny-lang/dafny/issues/762).
 
-* Is inconsistency between quantification ordering and `<` an issue? (e.g. `<` on datatypes means "rank comparison"
-and can't be compiled, string prefix rather than lexicographic ordering, etc)
+Along similar lines, will users frequently want to customize the ordering of their quantifications without
+creating explicit collection values? To produce the sequence `[4, 3, 2, 1, 0]`, for example, 
+we could consider supporting something like `seq i by > | 0 <= i < 5`.
 
-```dafny
-function QuickSort(s: seq<int>): seq<int> {
-  // Oops, this discards multiplicity
-  seq x | x in s
-} by method {
-  // ...
-}
-```
+Although the `seq i | i in mySet` pattern is great for expressing the sorted sequence of elements in
+a set, there doesn't seem to be as direct a way to express the sorted sequence of elements in another
+sequence or multiset, since the plain `i` declaration implies a natural ordering, which doesn't allow
+duplicates. This could also be addressed by the above idea of customizing the ordering, if
+`seq i <- mySeq by <` was allowed.
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
@@ -489,6 +540,15 @@ for `seq<char>`, where `char` is defined as a UTF-16 code units, and hence allow
 Unicode. Modelling unicode correctly will involve specifying that the semantic contents of a UTF-8 string, for example, is
 a sequence of Unicode code points that is not efficiently accessed with indices. The features proposed here provide ways to work with
 such datatypes efficiently at runtime.
+
+## Let-such-that expressions without uniqueness proofs
+
+An expression `var x :| P(x); ...` is currently only allowed in specification contexts
+if Dafny can prove that there is exactly one such `x` that satisfies `P(x)`.
+With ordered quantification in our toolbox, we could lift this requirement when
+the quantification is ordered, and ensure that the first such `x` according to that
+order is picked. This would be more useful if we also allowed the same additional syntax,
+i.e. `var x <- C :| P(x); ...`.
 
 ## Array comprehensions
 
@@ -539,11 +599,4 @@ This mirrors the `Collector` concept from the Java streaming APIs, and ideally t
 parameter to `collect` expressions would define similar operations for merging intermediate results
 to leave the door open for parallel or even distributed computation.
 
-## Notes
 
-Binding patterns:
-* x by myLessThen (future) - user-provided ordering
-
-Provide a way to specify the ordering when you don't have a collection?
-* x: int will be a wibble wobble order, but x: nat will be sequential
-  * Technially that's a wibble wobble order restricted to nat values!
