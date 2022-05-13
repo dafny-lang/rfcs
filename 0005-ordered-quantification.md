@@ -114,7 +114,7 @@ The new features that are affected by quantification ordering will behave simila
 `seq x: real | x in mySet && P(x)` is calculated via the same filtered enumeration, 
 but collected into a sorted sequence instead.
 
-There will be three supported variable declaration styles, and others could potentially be added in the future:
+There will be two supported variable declaration styles, and others could potentially be added in the future:
 
 1. `x [: T]`
 
@@ -133,11 +133,6 @@ There will be three supported variable declaration styles, and others could pote
     If `C` is a `multiset`, multiple bindings with the same value of `x` will be created, but their ordering is still non-deterministic.
 
     The `<-` symbol would be read as "from", so a statement like `foreach x <- C { ... }` would be read as "for each x from C, ...". Note that `<-` is not an independent operator and is intentionally distinct from the `in` boolean operator.
-
-3. `<CasePatternLocal> <- C`
-
-    This is a generalization of the previous case that supports pattern matching, as in variable declarations and match statements.
-    It allows destructuring datatypes and tuples, as in `(k, v) <- myMap.Items`, and filtering, as in `Some(x) <- mySetOfOptionals`.
 
 When a single quantifier domain includes multiple declarations separated by commas, 
 the the orderings take precedence from left to right. 
@@ -160,9 +155,7 @@ The overall syntax for quantifier domains will become:
 
 ```
 QuantifierVarDecl ::=
-  Ident [":" Type]
-  | Ident [":" Type] "<-" Expression
-  | CasePatternLocal "<-" Expression
+  Ident [":" Type] [ "<-" Expression ]
 
 QuantifierDomain ::=
   QuantifierVarDecl 
@@ -174,8 +167,6 @@ Note that this concept and the new `<-` syntax applies to any use of quantifier 
 is irrelevant for all current uses: the semantics of `[i]set` and `map` comprehensions, `forall` and `exists` expressions, 
 and `forall` statements all do not depend on the order of quantification and semantically ignore duplicates.
 Importantly, these extensions to the syntax and semantics of quantifier domains are all fully backwards compatible.
-They do offer a more efficient expression of common uses of these existing features, however: `set Some(x) <- s` is equivalent to
-`set x | x in s && x.Some? :: x.value`, for example.
 
 ## foreach Loops
 
@@ -294,7 +285,8 @@ foreach x <- s {
 It is even possible to attach this ghost state directly to the sequence with a helper function:
 
 ```dafny
-foreach (x, xs) <- WithPrefixes(c) {
+foreach xAndXs <- WithPrefixes(c) {
+  var (x, xs) := xAndXs;
   ...
 }
 ```
@@ -310,7 +302,8 @@ function method WithPrefixes<T>(s: seq<T>): seq<(T, ghost seq<T>)> {
 Similarly, a helper function can be provided to maintain a running index of the enumerated values:
 
 ```dafny
-foreach (x, i) <- WithIndexes(s) {
+foreach xAndI <- WithIndexes(s) {
+  var (x, i) := xAndI;
   ...
 }
 
@@ -340,7 +333,7 @@ using sequence comprehensions:
 ```dafny
 // Filtering to optional values
 var s: seq<Option<T>> := ...;
-var filtered: seq<T> := seq Some(x) <- s;
+var filtered: seq<T> := seq o <- s | o.Some? :: o.value;
 
 // Zipping two lists together
 var a: seq<T> := ...;
@@ -553,6 +546,24 @@ parallel orderings as in Cryptol or Haskell, such that indexing an arbitrary col
 [future-possibilities]: #future-possibilities
 
 Adding this building block to the Dafny language opens up a wide array of tempting new features!
+
+## Pattern matching on quantifier variables
+
+The LHS of `<-` declarations could be extended to allow case patterns, just as variable declaration statements do.
+This would allow destructuring datatypes and tuples, as in `(k, v) <- myMap.Items`. It could also support filtering, as in `Some(x) <- mySetOfOptionals`.
+This would be consistent with how case patterns are used in match statements; these two loops would be equivalent, for example:
+
+```dafny
+foreach Some(x) <- [None, Some(42), None] {
+  print x;
+}
+
+foreach o <- [None, Some(42), None] {
+  match o {
+    case Some(x) => print x;
+  }
+}
+```
 
 ## User-defined collections
 
