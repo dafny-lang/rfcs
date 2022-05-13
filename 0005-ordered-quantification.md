@@ -139,8 +139,8 @@ There will be three supported variable declaration styles, and others could pote
     This is a generalization of the previous case that supports pattern matching, as in variable declarations and match statements.
     It allows destructuring datatypes and tuples, as in `(k, v) <- myMap.Items`, and filtering, as in `Some(x) <- mySetOfOptionals`.
 
-A single quantifier domain may include multiple such declarations separated by commas, 
-in which case the orderings described for each clause take lexicographic precedence. 
+When a single quantifier domain includes multiple declarations separated by commas, 
+the the orderings take precedence from left to right. 
 The domain `x <- [1, 2], y <- [3, 4]` will therefore specify the following bindings in this order:
 
 1.  `x == 1, y == 3`
@@ -149,7 +149,7 @@ The domain `x <- [1, 2], y <- [3, 4]` will therefore specify the following bindi
 1.  `x == 2, y == 4`
 
 In addition, collection expressions used in declarations are permitted to refer to variables declared in previous declarations.
-The domain `x <- [[1, 2], [3, 4], y <- x` therefore produces these bindings:
+The domain `x <- [[1, 2], [3, 4]], y <- x` therefore produces these bindings:
 
 1.  `x == [1, 2], y == 1`
 1.  `x == [1, 2], y == 2`
@@ -236,7 +236,7 @@ foreach x: real | 0.0 <= x < 1.0 {  // Error: ...
 The quantifier domain is allowed to be potentially infinite if the loop is used in a compiled context and an explicit `decreases` clause is provided.
 `decreases *` is permitted, in which the `foreach` loop may never terminate. Any other `decreases` clause can be provided
 to ensure the loop terminates even if the domain is potentially infinite. For example, the following (very slow) example collects
-five arbitrary primes (assuming that Dafny can figure out how to enumerate the `allPrimes` infinite set):
+at most five arbitrary primes (assuming that Dafny can figure out how to enumerate the `allPrimes` infinite set):
 
 ```dafny
 var allPrimes := iset n | !exists i, j | 1 < i <= j < n :: i * j == n;
@@ -248,6 +248,12 @@ foreach p <- allPrimes
   if |fivePrimes| == 5 { break; }
   fivePrimes := fivePrimes + [x];
 }
+// We can't assert |fivePrimes| == 5 here, since
+// we can't prove that the loop couldn't have terminated
+// earlier by running out of primes.
+// The decreases metric proves that the loop will terminate,
+// but is only an upper bound on the number of iterations.
+assert |fivePrimes| <= 5;
 ```
 
 Note that the range expression is optional, and if omitted the loop will iterate over all
@@ -360,8 +366,8 @@ assert (seq x <- b | x in a) == [3, 1];
 ```
 
 Since sequence comprehensions are expressions rather than statements, they carry an additional restriction
-when used in functions: their ordering must be fully deterministic. If `s` is a `set<int>`, for example,
-`seq x <- s` would be rejected in specification contexts, whereas `seq x | x in s` would be allowed.
+when compiled: their ordering must be fully deterministic. If `s` is a `set<int>`, for example,
+`seq x <- s` would be rejected in compiled code, whereas `seq x | x in s` would be allowed.
 This is very similar to the restriction on `:|` let-such-that expressions, which is not relevant for equivalent
 `:|` assign-such-that statements.
 
@@ -377,7 +383,8 @@ pre-condition to a lambda expression, as this issue highlights: https://github.c
 As mentioned in the guide-level explanation, `foreach` loops and sequence comprehensions are both able to
 borrow concepts and implementation substantially from other features. Parsing, resolving, verifying, and compiling
 quantifier domains is already a mature aspect of the Dafny implementation. The most significant implementation burden
-is ensuring that enumeration ordering is threaded through, and deterministic in contexts where it needs to be. 
+is ensuring that the required quantification ordering is threaded through the stack, 
+and checked to be deterministic when used in compiled sequence comprehensions. 
 
 ## Verification
 
@@ -462,7 +469,7 @@ It may even be possible to implement multiple extensions in parallel.
 
 The primary drawback to this proposal is the burden of adding the new concept of quantification ordering. 
 This means extra cognitive load for Dafny users, extra implementation effort for any new builtin collection types, 
-and additional testing to ensure that quantification domains are deterministically enumerable when required.
+and additional testing to ensure that quantification domains are deterministically ordered when required.
 
 The bounded pool heuristics described above are necessary in order to support compiling expressions such as set
 comprehensions that are not computable in general. They come with the downside that it is less obvious to Dafny
@@ -565,9 +572,9 @@ Unicode. Modelling unicode correctly will involve specifying that the semantic c
 a sequence of Unicode code points that is not efficiently accessed with indices. The features proposed here provide ways to work with
 such datatypes efficiently at runtime.
 
-## Let-such-that expressions without uniqueness proofs
+## Compiled let-such-that expressions without uniqueness proofs
 
-An expression `var x :| P(x); ...` is currently only allowed in specification contexts
+An expression `var x :| P(x); ...` is currently only allowed in compiled contexts
 if Dafny can prove that there is exactly one such `x` that satisfies `P(x)`.
 With ordered quantification in our toolbox, we could lift this requirement when
 the quantification is ordered, and ensure that the first such `x` according to that
