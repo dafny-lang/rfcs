@@ -149,7 +149,7 @@ The domain `x <- [1, 2], y <- [3, 4]` will therefore specify the following bindi
 1.  `x == 2, y == 4`
 
 In addition, collection expressions used in declarations are permitted to refer to variables declared in previous declarations.
-The domain `x <- [[1, 2], [3, 4], y <- x` therefore produces these bindings:
+The domain `x <- [[1, 2], [3, 4]], y <- x` therefore produces these bindings:
 
 1.  `x == [1, 2], y == 1`
 1.  `x == [1, 2], y == 2`
