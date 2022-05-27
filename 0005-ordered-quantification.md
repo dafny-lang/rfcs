@@ -26,6 +26,7 @@ support efficient random access, and are more likely to be used incorrectly by a
 ```dafny
 // Before:
 method AllPairs(s: seq<nat>) returns (result: seq<(nat, nat)>) {
+  result := [];
   for i := 0 to |s| {
     var left := s[i];
     for j := 0 to |s| {
@@ -138,7 +139,7 @@ but support for user-defined collection types will be possible in the future.
 If `C` is a `map`, the bound values will be the keys of the `map`, in order to be consistent with the meaning of `x in C`;
 `map.Items` can be used instead to bind key-value pairs.
 
-Assuming that we have `posNat == iset n: nat | 0 <= n`, the set comprehension above could also then be expressed as:
+Assuming that we have `posNat == iset n: nat | 0 < n`, the set comprehension above could also then be expressed as:
 
 ```dafny
 forall x <- posNat, y <- posNat :: x % gcd(x, y) == 0 && y % gcd(x, y) == 0
@@ -151,9 +152,9 @@ Besides offering a slightly more succinct expression of existing quantification 
 quantified variable domains also specify the ordering of quantification bindings, and allow variables to be bound to duplicate values.
 This ordering of bindings is non-deterministic unless `C` is a sequence.
 If `C` is a `multiset`, multiple bindings with the same value of `x` will be created, but their ordering is still non-deterministic.
-Note that ordering and multiplicity is irrelevant for all current uses:
-the semantics of `[i]set` and `[i]map` comprehensions, `forall` and `exists` expressions, 
-and `forall` statements all do not depend on the order of quantification and semantically ignore duplicates.
+Ordering and duplication are not relevant for `[i]set` and `[i]map` comprehensions, `forall` and `exists` expressions, 
+and `forall` statements. Nevertheless, it is natural to extend these comprehensions with the `x <- C` syntax, as it is equivalent to
+`x | x in C` but is slightly more compact, and avoids having to repeat the `x` syntactically.
 
 The `<-` symbol would be read as "from", so a statement like `foreach x <- C { ... }` would be read as "for each x from C, ...". 
 `<-` is not an independent operator and is intentionally distinct from the `in` boolean operator.
@@ -387,6 +388,12 @@ when compiled: their ordering must be fully deterministic. If `s` is a `set<int>
 This is very similar to the restriction on `:|` let-such-that expressions, which is not relevant for equivalent
 `:|` assign-such-that statements.
 
+Note this restriction is technically a property of the particular compiler and runtime, and not a fundamental limitation implied by the language semantics.
+Currently the various runtimes use some kind of `HashSet` datatype to represent Dafny sets,
+and these generally may enumerate the value `{1, 2, 3}` in a different order than `{3, 2, 1}`, for example.
+The runtime datatypes could be changed to guarantee a deterministic ordering, but this would carry a complexity and potential performance cost.
+The workaround will be to provide a standard library `function by method` that sorts the result of `seq x <- s` and hence restores determinism.
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
@@ -575,9 +582,9 @@ foreach Some(x) <- [None, Some(42), None] {
 }
 
 foreach o <- [None, Some(42), None] {
-  match o {
-    case Some(x) => print x;
-  }
+  match o
+  case None =>
+  case Some(x) => print x;
 }
 ```
 
