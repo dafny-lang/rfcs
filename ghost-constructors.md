@@ -9,6 +9,272 @@ contexts and auto-initialization.  It also restricts discriminators
 and destructors in compiled contexts, so that it is never necessary at
 run time to check if a value is of a ghost variant.
 
+Simple Example
+--------------
+
+A simple application of ghost constructors is a program that defines
+
+``` dafny
+datatype Color = Red | Green | Yellow | Blue
+```
+
+and models some program behavior that's described in terms of these 4
+colors.  Although all the colors play a role in the specification, the
+program only needs `Green` and `Blue` at run time. With ghost
+constructors, the program can then change the definition of `Color` to
+
+``` dafny
+datatype Color = ghost Red | Green | ghost Yellow | Blue
+```
+
+This is in the style of using ghosts today. For example, today, a
+program may include parameters and functions that are used only in
+specifications, and these can then be marked as ghost.
+
+Motivating Example
+------------------
+
+The main motivating example for ghost constructors is uninitialized
+storage. In general, not initializing storage is a bad idea, since
+accidental use of the uninitialized storage may lead to unintended
+behavior at run time. However, one can make some programs more
+efficient if large quantities of storage are initialized lazily.  To
+verify that lazily initialized storage is used properly, a language
+needs some mechanism by which a verifier understands that certain
+values are not to be used. One can imagine that a program has some
+"ghost values"---values that may be present at run time, but are never
+used for anything important at run time. Ghost constructors is a
+simple and natural way to extend Dafny so that one can reason about
+such "ghost values".
+
+To show this more concretely, consider a class that implements an
+extensible vector of elements. The element type is given as a type
+parameter, about which nothing is known. The class uses a fixed-lenght
+array to hold the elements of the vector. To reduce copying, the class
+allocates the array to be "oversized", to give room for future
+extensions of the vector. The class only uses a prefix of the array's
+elements, so the values of the remaining array elements are
+immaterial. It would therefore be nice not to have to initialize those
+elements until the vector needs them.
+
+Here is a module that implements such a class. Note how the
+`InitSingleton` constructor and the `Extend` method allocate oversized
+arrays, whereas the `InitEmpty` constructor allocates a precisely
+sized array. (The example uses the Dafny 4 syntax for functions and
+predicates.)
+
+``` dafny
+module VectorModule {
+  export
+    reveals Vector
+    provides Vector.Elements, Vector.Repr, Vector.Valid
+    provides Vector.InitEmpty, Vector.InitSingleton
+    provides Vector.Get, Vector.Put, Vector.Extend
+
+  class Vector<X> {
+    ghost var Elements: seq<X>
+    ghost var Repr: set<object>
+
+    var arr: array<X>
+    var n: nat // the number of elements of "arr" that are in use
+
+    ghost predicate Valid()
+      reads this, Repr
+      ensures Valid() ==> this in Repr
+    {
+      && this in Repr
+      && arr in Repr
+      && n <= arr.Length
+      && Elements == arr[..n]
+    }
+
+    constructor InitEmpty()
+      ensures Valid() && fresh(Repr)
+      ensures Elements == []
+    {
+      arr := new X[0];
+      n := 0;
+      Elements := [];
+      Repr := {this, arr};
+    }
+
+    constructor InitSingleton(x: X)
+      ensures Valid() && fresh(Repr)
+      ensures Elements == [x]
+    {
+      arr := new X[1000](_ => x);
+      n := 1;
+      Elements := [x];
+      Repr := {this, arr};
+    }
+
+    function Get(i: nat): X
+      requires Valid() && i < |Elements|
+      reads Repr
+      ensures Get(i) == Elements[i]
+    {
+      arr[i]
+    }
+
+    method Put(i: nat, x: X)
+      requires Valid() && i < |Elements|
+      modifies Repr
+      ensures Valid() && fresh(Repr - old(Repr))
+      ensures Elements == old(Elements)[i := x]
+    {
+      arr[i] := x;
+      Elements := Elements[i := x];
+    }
+
+    method Extend(x: X)
+      requires Valid()
+      modifies Repr
+      ensures Valid() && fresh(Repr - old(Repr))
+      ensures Elements == old(Elements) + [x]
+    {
+      if n == arr.Length {
+        arr := new X[n + 3000](i requires Valid() reads this, Repr => if 0 <= i < n then arr[i] else x);
+        Repr := Repr + {arr};
+      } else {
+        arr[n] := x;
+      }
+      n := n + 1;
+      Elements := Elements + [x];
+    }
+  }
+}
+```
+
+The unused portion of the two oversized arrays (in `InitSingleton` and
+`Extend`) are initialized with a value of type `X` that these routines
+happen to have around. In contrast, `InitEmpty` does not know what an
+`X` element looks like (or if one even exists), so it has no choice
+but to allocate an empty array.
+
+We can change the class to use an `Option` type to indicate which
+elements are in use:
+
+``` dafny
+module VectorModule {
+  export
+    reveals Vector
+    provides Vector.Elements, Vector.Repr, Vector.Valid
+    provides Vector.InitEmpty, Vector.InitSingleton
+    provides Vector.Get, Vector.Put, Vector.Extend
+
+  datatype Option<X> = None | Some(value: X)
+
+  class Vector<X> {
+    ghost var Elements: seq<X>
+    ghost var Repr: set<object>
+
+    var arr: array<Option<X>>
+    var n: nat // the number of elements of "arr" that are in use
+
+    ghost predicate Valid()
+      reads this, Repr
+      ensures Valid() ==> this in Repr
+    {
+      && this in Repr
+      && arr in Repr
+      && |Elements| == n <= arr.Length
+      && forall i :: 0 <= i < n ==> arr[i].Some? && Elements[i] == arr[i].value
+    }
+
+    constructor InitEmpty()
+      ensures Valid() && fresh(Repr)
+      ensures Elements == []
+    {
+      arr := new Option<X>[1000];
+      n := 0;
+      Elements := [];
+      Repr := {this, arr};
+    }
+
+    constructor InitSingleton(x: X)
+      ensures Valid() && fresh(Repr)
+      ensures Elements == [x]
+    {
+      arr := new Option<X>[1000];
+      n := 1;
+      Elements := [x];
+      Repr := {this, arr};
+      new;
+      arr[0] := Some(x);
+    }
+
+    function Get(i: nat): X
+      requires Valid() && i < |Elements|
+      reads Repr
+      ensures Get(i) == Elements[i]
+    {
+      arr[i].value
+    }
+
+    method Put(i: nat, x: X)
+      requires Valid() && i < |Elements|
+      modifies Repr
+      ensures Valid() && fresh(Repr - old(Repr))
+      ensures Elements == old(Elements)[i := x]
+    {
+      arr[i] := Some(x);
+      Elements := Elements[i := x];
+    }
+
+    method Extend(x: X)
+      requires Valid()
+      modifies Repr
+      ensures Valid() && fresh(Repr - old(Repr))
+      ensures Elements == old(Elements) + [x]
+    {
+      if n == arr.Length {
+        var b := new Option<X>[n + 3000];
+        forall i | 0 <= i < n {
+          b[i] := arr[i];
+        }
+        arr := b;
+        Repr := Repr + {arr};
+      }
+      arr[n] := Some(x);
+      n := n + 1;
+      Elements := Elements + [x];
+    }
+  }
+}
+```
+
+In this new program, nothing is said about the unused parts of the
+arrays. Dafny is okay with this, because `Option<X>`, unlike `X`, is
+known to be an auto-init type. Note that the `InitEmpty` is now able
+to allocate an oversized array, too. The `Option` datatype is also
+nice, because it gives a well understood way to describe when an array
+element has a value of importance.
+
+However, the program has some drawbacks. One is that it has a
+"wrapper" (`Some`) around each element. This wrapper has some run-time
+overhead. Another drawback is that the run-time system still has to
+initialize the elements of the oversized arrays, namely to the value
+`None`. Still, every elements that's ever used in the array is of the
+`Some` variant.
+
+By changing the `None` constructor to be ghost, we remove these drawbacks.
+
+``` dafny
+datatype Option<X> = ghost None | Some(value: X)
+```
+
+This is the only change necessary---the rest of the program and
+specifications stay the same.
+
+The rules of ghost constructors (see below) ensure that the program
+never needs to distinquish `None` and `Some` values. Because of the
+restrictions around ghost constructors, a compiler now has the freedom
+to omit an initialization when such an initialization would have used
+the value `None` anyway. Furthermore, the compiler can also do the
+optimization of removing the wrapper. That is, the type
+`array<Option<X>>` can be compiled just like `array<X>`, and the
+destructor `.value` is then just the identity function.
+
 Syntax
 ------
 
@@ -55,7 +321,7 @@ a compiled context is allowed only if it is known that the value is
 not of any of the ghost variants. As a concrete example, consider the
 following declaration:
 
-```
+``` dafny
 datatype D = ghost G(x: int) | D0(y: int) | D1(z: int)
 ```
 
@@ -68,7 +334,7 @@ the destructor. In compiled contexts, this precondition is now
 strengthened with the condition that the receiver is not of a ghost
 variant. As a concrete example, consider the declaration
 
-```
+``` dafny
 datatype D = ghost G(x: int, y: int) | D0(x: int) | D1(z: int)
 ```
 
@@ -109,7 +375,7 @@ constructor wrappers altogether. This is best explained by example.
 The most compelling use case for this is an "optionally initialized"
 type:
 
-```
+``` dafny
 datatype Unknown<T> = ghost Absent | Present(value: T)
 ```
 
