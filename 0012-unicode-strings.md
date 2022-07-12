@@ -143,39 +143,74 @@ without having to decode these bytes into character values.
 # Drawbacks
 [drawbacks]: #drawbacks
 
-Why should we *not* do this?
+Changing the behavior of an existing concept in a backwards-incompatible way always carries a high cost,
+and I do not propose it lightly. 
+
+***TODO***
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
+***TODO***
+
 ## Enforce valid UTF-16 strings in the verifier
 
-## Encode valid UTF-16 strings as a library predicates
+***TODO***
 
-## Distinct string type
+## Define "valid UTF-16 strings" as a predicate in a shared library
 
-## Distinct "rune" type
+***TODO***
+
+## Add a new, distinct string type
+
+Since the current definition of `string` as an alias for `seq<char>` 
+***TODO***
+
+## Add a new, distinct "rune" type
 
 We could maintain the current definition of the `char` type, and introduce a new `rune` type to represent Unicode scalar values
-instead ("rune" being the term Go uses for this).
+instead ("rune" being the term both Go and C# use for this).
 This would make it more obvious when reading Dafny source code in isolation whether it was using the new definitions of strings.
 There are often few explicit references to individual character values in code that references string values, however,
 and even when the `char` type is used it can often be only implicitly referenced because of type inference.
+This alternative does not seem to be worth the implementation cost or additional cognitive load on users,
+especially since it is hard to imagine any codebase needing to use both `char` and `rune` together.
 
 ## Disallow compiling s[i] 
 
 Given popular Unicode encodings such as UTF-8 and UTF-16 do not support random access of characters,
-we could decide that 
+we could decide to forbid random access of string elements in compiled code,
+instead directing users to fallback to external code for efficient access,
+or to sequential access via the new [ordered quantification features](https://github.com/dafny-lang/rfcs/pull/10) (once they are implemented).
+This would be a much more disruptive breaking change for existing code, however.
+String indexing would not be the first instance in Dafny of a simple, mathematical expression
+that supports verification easily but is inefficient at runtime.
+The proposed lazy decoding approach should provide a good balance between the clean expression of concepts
+and efficient, unsurprising runtime behavior.
 
 # Prior art
 [prior-art]: #prior-art
 
 Unicode has a long and messy history, and the approach to supporting Unicode varies dramatically across different programming languages.
+Here is the current state of many of the most popular programming languages, especially those that Dafny currently or will likely
+soon support compiling to:
+
+***TODO***
+
+* C#:
+* Java:
+* Go:
+* JavaScript:
+* C/C++:
+* Rust:
+* Swift:
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
+***TODO***
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
+***TODO***
