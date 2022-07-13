@@ -144,27 +144,74 @@ without having to decode these bytes into character values.
 [drawbacks]: #drawbacks
 
 Changing the behavior of an existing concept in a backwards-incompatible way always carries a high cost,
-and I do not propose it lightly. 
+and I do not propose it lightly. It optimizes for a better new Dafny user experience,
+where simple code that works with strings will be more correct by default,
+at the expense of existing users potentially needing to change their code when upgrading,
+or adding the `/unicodeChar:0` option to their build process.
+It is likely that the `/unicodeChar:0` option will need to be supported for a long time,
+to support users unable or unwilling to do this work,
+although the burden of maintaining this option should not be high.
 
-***TODO***
+I propose this approach since Dafny is still relatively young as a programming language,
+and hence the impact of the breaking change is still relatively small.
+If anything, the longer we wait to correct this issue,
+the more Dafny code will continue to be written with subtle bugs that verification does not detect,
+or even new compilation targets that introduce them when compiling.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-***TODO***
+There are many ways to tackle this problem, many of them inspired in part by how other programming languages
+have tackled them in the past (see also [Prior Art](#prior-art)).
 
 ## Enforce valid UTF-16 strings in the verifier
 
-***TODO***
+The cheapest solution to implement would likely be to add a new requirement in the verifier
+that surrogate `char` values are only used in pairs as intended.
+This would likely require more user effort to migrate their code, however,
+as every operation on strings would now have to prove that a surrogate pair
+is not being split up.
+It also does not reduce the complexity of compiling
+strings to various target languages that do not necessarily use UTF-16.
 
 ## Define "valid UTF-16 strings" as a predicate in a shared library
 
+The next cheapest solution would be to define a subset type of `string` that enforces
+correct usage of surrogate characters.
+Similar such definitions already exist for valid [UTF-8](https://github.com/aws/aws-encryption-sdk-dafny/blob/mainline/src/Util/UTF8.dfy#L21).
+and [UTF-16](https://github.com/dafny-lang/libraries/blob/master/src/Unicode/Utf16EncodingForm.dfy) code unit sequences
+in some Dafny codebases.
+This also introduces the same proof obligations as the previous solution,
+although here they could be proved by numerous helper methods that operate on the subset type
+in the same shared library.
+
 ***TODO***
 
-## Add a new, distinct string type
+## Change the definition of the string type
 
-Since the current definition of `string` as an alias for `seq<char>` 
-***TODO***
+The current definition of `string` as an alias for `seq<char>` is problematic because surrogate code points
+are not truly independent values in the sequence.
+It is actually quite unusual for a general-purpose language to treat strings as only a special case of
+generic datatypes for arbitrary sequences of values.
+Dafny could instead make `string` an alias for a different type, whether built-in or defined in Dafny source in the runtime or a standard library,
+that treats strings as a more specialized datatype. It could then be more prescriptive about picking a definitive encoding to
+support directly (most likely UTF-8).
+
+This would certainly require more effort for existing code to migrate to.
+It is also a much more expensive solution to implement, since it requires creating an API for strings
+that is at least adequate to replace all existing usage of sequence operations.
+These interfaces often become very large to support all common string operations efficiently,
+and would need very careful thought.
+Although unusual, representing strings directly as sequences of abstract characters
+works very well for a verification-focussed language like Dafny,
+since sequences are already a deep built-in concept in the language semantics.
+
+This new type could alternatively be introduced with a different name, while keeping the alias of `string` for `seq<char>`.
+This would only increase the confusion and cognitive burden for Dafny users in the future, though.
+It may be a good idea, however, for a shared Dafny source library to define a `EncodedString` wrapper
+around encoded bytes that includes a ghost `string` value defining the actual abstract string encoded.
+This could make the [existing implementations of UTF-8 and UTF-16 encodings](https://github.com/dafny-lang/libraries/tree/master/src/Unicode)
+more efficient and pleasant to use.
 
 ## Add a new, distinct "rune" type
 
@@ -179,7 +226,7 @@ especially since it is hard to imagine any codebase needing to use both `char` a
 ## Disallow compiling s[i] 
 
 Given popular Unicode encodings such as UTF-8 and UTF-16 do not support random access of characters,
-we could decide to forbid random access of string elements in compiled code,
+we could decide to forbid random access of string elements (i.e. `s[i]`) in compiled code,
 instead directing users to fallback to external code for efficient access,
 or to sequential access via the new [ordered quantification features](https://github.com/dafny-lang/rfcs/pull/10) (once they are implemented).
 This would be a much more disruptive breaking change for existing code, however.
@@ -192,7 +239,7 @@ and efficient, unsurprising runtime behavior.
 [prior-art]: #prior-art
 
 Unicode has a long and messy history, and the approach to supporting Unicode varies dramatically across different programming languages.
-Here is the current state of many of the most popular programming languages, especially those that Dafny currently or will likely
+Here is the current state of several popular programming languages, especially those that Dafny currently or will likely
 soon support compiling to:
 
 ***TODO***
@@ -202,6 +249,8 @@ soon support compiling to:
 * Go:
 * JavaScript:
 * C/C++:
+* Python:
+* Ruby:
 * Rust:
 * Swift:
 
