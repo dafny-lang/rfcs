@@ -170,11 +170,11 @@ The cheapest solution to implement would likely be to add a new requirement in t
 that surrogate `char` values are only used in pairs as intended.
 This would likely require more user effort to migrate their code, however,
 as every operation on strings would now have to prove that a surrogate pair
-is not being split up.
+is not being split up. 
 It also does not reduce the complexity of compiling
 strings to various target languages that do not necessarily use UTF-16.
 
-## Define "valid UTF-16 strings" as a predicate in a shared library
+## Define "valid UTF-16 strings" as a subset type in a shared library
 
 The next cheapest solution would be to define a subset type of `string` that enforces
 correct usage of surrogate characters.
@@ -185,7 +185,10 @@ This also introduces the same proof obligations as the previous solution,
 although here they could be proved by numerous helper methods that operate on the subset type
 in the same shared library.
 
-***TODO***
+This would likely be the best solution if changing the Dafny language itself was not an option.
+The major downside is that built-in sequence operations such as `s[i]` and `s + s'` would still require additional
+effort to achieve verification, or would have to be abandoned entirely in favour of the helper methods
+provided by the shared library.
 
 ## Change the definition of the string type
 
@@ -223,10 +226,10 @@ and even when the `char` type is used it can often be only implicitly referenced
 This alternative does not seem to be worth the implementation cost or additional cognitive load on users,
 especially since it is hard to imagine any codebase needing to use both `char` and `rune` together.
 
-## Disallow compiling s[i] 
+## Disallow compilation of string indexing
 
 Given popular Unicode encodings such as UTF-8 and UTF-16 do not support random access of characters,
-we could decide to forbid random access of string elements (i.e. `s[i]`) in compiled code,
+we could decide to forbid random access of string elements (e.g. `s[i]`) in compiled code,
 instead directing users to fallback to external code for efficient access,
 or to sequential access via the new [ordered quantification features](https://github.com/dafny-lang/rfcs/pull/10) (once they are implemented).
 This would be a much more disruptive breaking change for existing code, however.
