@@ -8,11 +8,14 @@
 
 The Dafny `string` type is an alias for the type `seq<char>`, and the `char` type is an opaque built-in type
 representing individual characters. `char` values can be converted to and from `int` values (using `as char` and `as int` expressions),
-and an `int` value corresponding to a `char` value is currently required to be a valid UTF-16 code point, i.e. in the range
-`[0, 65536)`. This range includes the so-called "surrogate" characters, i.e. code points in the range `[0xD800, 0xDFFF]`, which must be used in pairs in order to encode some characters in UTF-16, and are not assignable Unicode code points themselves.
+and an `int` value corresponding to a `char` value is currently required to be a valid UTF-16 code unit, i.e. in the range
+`[0, 65536)`. This range includes the so-called ["surrogate" code points](https://unicode.org/faq/utf_bom.html#utf16-2),
+i.e. values in the range `[0xD800, 0xDFFF]`,
+which must be used in pairs in order to encode some characters in UTF-16,
+and are not assignable Unicode code points themselves.
 
-I propose a breaking change in Dafny 4.0, to make `char` represent any Unicode character, independent of the encoding used.
-This means that the corresponding `int` value for a `char` must always be a [Unicode scalar value](https://www.unicode.org/versions/Unicode14.0.0/ch03.pdf#G7404), meaning any value in the range `[0, 0x10FFFF]` but excluding the surrogate characters from `[0xD800, 0xDFFF]`.
+I propose a breaking change in Dafny 4.0, to make `char` represent any Unicode code point, independent of the encoding used.
+This means that the corresponding `int` value for a `char` must always be a [Unicode scalar value](https://www.unicode.org/versions/Unicode14.0.0/ch03.pdf#G7404), meaning any value in the range `[0, 0x10FFFF]` but excluding the surrogate code points from `[0xD800, 0xDFFF]`.
 
 # Motivation
 [motivation]: #motivation
@@ -22,7 +25,7 @@ The two primary motivations behind this change are correctness and compatibility
 ## Correctness
 
 The current definition of these types means that the Dafny `string` type allows data that is not a valid Unicode string.
-The value `[0xD800 as char]`, for example, is not a valid Unicode string and has no valid encoding in UTF-8, UTF-16,
+The value `"\uD800"`, for example, is not a valid Unicode string and has no valid encoding in UTF-8, UTF-16,
 or any other encoding.
 This means that any logic to process strings must manually specify pre-conditions to exclude invalid values, or
 be less precise with its specification. For example, an implementation of UTF-8 encoding would have to reject
@@ -33,7 +36,7 @@ discarding or replacing invalid characters.
 
 The current definitions of `string` and `char` are biased towards using a UTF-16 encoding at runtime.
 This aligns well with some compilation target languages which also use UTF-16, such as Java, C#, and JavaScript, 
-but less well with those that use the more popular UTF-8 encoding, such as Go or Rust.
+but less well with those that use the recently more popular UTF-8 encoding, such as Go or Rust.
 Any Dafny code that interfaces with external code will often have to convert between `string` values and
 native representations of strings, and baking in the assumption of UTF-16 imposes a complexity and performance
 penalty for multiple target environments.
@@ -78,14 +81,14 @@ This has been fixed, and both standard form and verbatim form string literals no
 A second form of escape sequence accepting a hexadecimal number with up to six digits, `\u{XXXXXX}`, 
 is now provided to support characters outside of the Basic Multilingual Plane
 using their direct Unicode code points instead of using surrogates.
-This change is fully backwards-compatible and not controlled by the `unicodeChar` flag.
+These changes are fully backwards-compatible and not controlled by the `unicodeChar` flag.
 
 ```dafny
 // Several different ways to express the same string literal
 var s1 := "Unicode is just so \ud83d\ude0e";
 var s2 := "Unicode is just so \u{1F60E}";
 var s3 := "Unicode is just so 😎";
-var s4 := @"Unicode is just so 😎";  // Escape sequences not supported in verbatim strings
+var s4 := @"Unicode is just so 😎";  // Escape sequences are not supported in verbatim strings
 ```
 
 The exact representation of strings at runtime, including the particular encoding,
@@ -95,8 +98,9 @@ represent characters and strings, and hence may cause compilation errors when us
 target language code.
 
 Note also that although the Unicode scalar value concept is more general than UTF-16 code units,
-it still does not always correspond to what humans will perceive as single atomic characters when rendered;
-see the concept of grapheme clusters [here](https://unicode.org/reports/tr29/) for more details.
+it still does not always correspond to what humans will perceive as single atomic characters when rendered.
+For example, the string `"e\u0301"` contains two Unicode scalar values, but renders as the single character `é`.
+See the concept of grapheme clusters [here](https://unicode.org/reports/tr29/) for more details.
 The proposed change to the `char` type is only intended to allow the Dafny language to safely abstract
 away from encodings, especially to support verifiably-correct code that must compile to multiple target languages.
 Providing more of the concepts defined by the Unicode standard is left out of scope for this proposal,
@@ -204,7 +208,7 @@ strings to various target languages that do not necessarily use UTF-16.
 
 The next cheapest solution would be to define a subset type of `string` that enforces
 correct usage of surrogate characters.
-Similar such definitions already exist for valid [UTF-8](https://github.com/aws/aws-encryption-sdk-dafny/blob/mainline/src/Util/UTF8.dfy#L21).
+Similar such definitions already exist for valid [UTF-8](https://github.com/aws/aws-encryption-sdk-dafny/blob/mainline/src/Util/UTF8.dfy#L21)
 and [UTF-16](https://github.com/dafny-lang/libraries/blob/master/src/Unicode/Utf16EncodingForm.dfy) code unit sequences
 in some Dafny codebases.
 This also introduces the same proof obligations as the previous solution,
@@ -235,12 +239,9 @@ Although unusual, representing strings directly as sequences of abstract charact
 works very well for a verification-focussed language like Dafny,
 since sequences are already a deep built-in concept in the language semantics.
 
-This new type could alternatively be introduced with a different name, while keeping the alias of `string` for `seq<char>`.
+This new type could alternatively be introduced with a different name, such as `unicode` as in Python 2,
+while keeping the alias of `string` for `seq<char>`.
 This would only increase the confusion and cognitive burden for Dafny users in the future, though.
-It may be a good idea, however, for a shared Dafny source library to define a `EncodedString` wrapper
-around encoded bytes that includes a ghost `string` value defining the actual abstract string encoded.
-This could make the [existing implementations of UTF-8 and UTF-16 encodings](https://github.com/dafny-lang/libraries/tree/master/src/Unicode)
-more efficient and pleasant to use.
 
 ## Add a new, distinct `rune` type
 
@@ -248,7 +249,7 @@ We could maintain the current definition of the `char` type, and introduce a new
 instead ("rune" being the term both Go and C# use for this).
 This would make it more obvious when reading Dafny source code in isolation whether it was using the new definitions of strings.
 There are often few explicit references to individual character values in code that references string values, however,
-and even when the `char` type is used it can often be only implicitly referenced because of type inference.
+and even when the `char` type is used it is often only implicitly referenced because of type inference.
 This alternative does not seem to be worth the implementation cost or additional cognitive load on users,
 especially since it is hard to imagine any codebase needing to use both `char` and `rune` together.
 
@@ -278,7 +279,7 @@ the definition of how scalar values are grouped into grapheme clusters
 is much more complicated and locale-specific than the simple mathematical rules of common encodings
 like UTF-8 and UTF-16. This means a higher cost and risk of bugs in adding these concepts
 to the core definition of Dafny, and a much higher likelihood of having to change
-the language definition or implementation in future versions of Unicode.
+the language definition or implementation to support future versions of Unicode.
 It would also mean `char` can no longer be represented as a single integer value,
 instead needing multiple scalar values in some cases,
 which would be a large a deep change to the encoding of `char` in the Boogie prelude and translator.
@@ -355,7 +356,7 @@ and unusually defines `Character` as an [*extended grapheme cluster*](https://un
 which is the closest concept to an atomic characeter as perceived visually by users.
 Unicode scalar values are represented with a distinct `Unicode.Scalar` structure instead.
 `String` provides `utf8`, `utf16`, and `unicodeScalars` views
-that present the contents as sequences of UTF-8, UTF-16, or UTF-32 code units respectively.
+that present the contents as sequences of UTF-8, UTF-16, and UTF-32 code units respectively.
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
@@ -365,3 +366,12 @@ Chance are very good that all Dafny code in existence to date either will not ch
 across this change, or will slightly improve because of the improved handling of surrogate code points.
 I have been unable to think of anything that would provide more value than the verifier will already provide,
 but I am open to suggestion as always!
+
+# Future possibilities
+
+## `EncodedString` type
+
+It may be a good idea for a shared Dafny source library to define a `EncodedString` wrapper
+around encoded bytes that includes a ghost `string` value defining the actual abstract string encoded.
+This could make the [existing implementations of UTF-8 and UTF-16 encodings](https://github.com/dafny-lang/libraries/tree/master/src/Unicode)
+more efficient and pleasant to use.
