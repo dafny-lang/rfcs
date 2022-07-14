@@ -53,14 +53,40 @@ This change in definition can cause previously verified code to no longer verify
 since expressions such as `someIntValue as char` or `someCharValue + 'a'` are no longer allowed to result in
 surrogate code points.
 
+This change can also result in behavioral changes that may not be caught by verification,
+as they may not intersect with any explicit specifications.
+Here is an example of a program that will behave differently depending on the value of `/unicodeChar`,
+and hence differently on Dafny 4.0 compared to earlier versions:
+
+```dafny
+method Main() {
+  var s := "Unicode is just so \ud83d\ude0e";
+  print s, "\n"     // "Unicode is just so 😎" (not affected by /unicodeChar)
+  print |s|, "\n"   // /unicodeChar:0 => "21"
+                    // /unicodeChar:1 => "20"
+  print s[19], "\n" // /unicodeChar:0 => "�"
+                    // /unicodeChar:1 => "😎"
+}
+```
+
 A related but largely orthogonal issue has also been addressed.
 Dafny source code files must be encoded in UTF-8,
-but in previous versions of Dafny string literals could only contain printable and white-space ASCII characters,
-due to a limitation of the parser generator the toolchain uses.
+but in previous versions of Dafny,
+string and character literals could only contain printable and white-space ASCII characters,
+due to a limitation of the Coco/R parser generator the toolchain uses.
 This has been fixed, and both standard form and verbatim form string literals now allow any Unicode characters.
-A second form of escape sequence, `\UXXXXXXXX`, is now provided to support characters outside of the Basic Multilingual Plane
+A second form of escape sequence accepting a hexadecimal number with up to six digits, `\u{XXXXXX}`, 
+is now provided to support characters outside of the Basic Multilingual Plane
 using their direct Unicode code points instead of using surrogates.
 This change is fully backwards-compatible and not controlled by the `unicodeChar` flag.
+
+```dafny
+// Several different ways to express the same string literal
+var s1 := "Unicode is just so \ud83d\ude0e";
+var s2 := "Unicode is just so \u{1F60E}";
+var s3 := "Unicode is just so 😎";
+var s4 := @"Unicode is just so 😎";  // Escape sequences not supported in verbatim strings
+```
 
 The exact representation of strings at runtime, including the particular encoding,
 is an implementation detail of a particular backend, and will often be optimized for the idioms and support
@@ -69,8 +95,8 @@ represent characters and strings, and hence may cause compilation errors when us
 target language code.
 
 Note also that although the Unicode scalar value concept is more general than UTF-16 code units,
-it still does not always correspond to what humans will perceive as a single atomic characters when rendered;
-see the concept of grapheme clusters [here](https://unicode.org/reports/tr29/) for more information.
+it still does not always correspond to what humans will perceive as single atomic characters when rendered;
+see the concept of grapheme clusters [here](https://unicode.org/reports/tr29/) for more details.
 The proposed change to the `char` type is only intended to allow the Dafny language to safely abstract
 away from encodings, especially to support verifiably-correct code that must compile to multiple target languages.
 Providing more of the concepts defined by the Unicode standard is left out of scope for this proposal,
@@ -81,7 +107,7 @@ under the assumption that it will enable such implementations via Dafny source c
 
 ## Verification
 
-The change to the definition of `char` in the `DafnyPrelude.bpl` file is very minimal.
+The change to the definition of `char` in the `DafnyPrelude.bpl` file is minimal.
 The only change is to replace expressions such as `0 <= n && n < 65536` with a separate predicate defined as follows:
 
 ```boogie
@@ -92,9 +118,9 @@ function char#IsUnicodeScalarValue(n: int): bool {
 ```
 
 As described above in the user-facing description of this feature, this will cause verification failures by design.
-Unlike many other programming languages that have had to add Unicode support over a major version bump,
+Unlike many other programming languages that have added Unicode support over a major version bump,
 Dafny is unusually well-positioned to catch most regressions statically.
-Given this, it is not worth the effort to build any additional migration features to help customers adopt this change.
+Given this, it does not seem worth the effort to build any additional migration features to help customers adopt this change.
 
 ## Compilation/Runtime
 
@@ -190,7 +216,7 @@ The major downside is that built-in sequence operations such as `s[i]` and `s + 
 effort to achieve verification, or would have to be abandoned entirely in favour of the helper methods
 provided by the shared library.
 
-## Change the definition of the string type
+## Change the definition of the `string` type
 
 The current definition of `string` as an alias for `seq<char>` is problematic because surrogate code points
 are not truly independent values in the sequence.
@@ -216,7 +242,7 @@ around encoded bytes that includes a ghost `string` value defining the actual ab
 This could make the [existing implementations of UTF-8 and UTF-16 encodings](https://github.com/dafny-lang/libraries/tree/master/src/Unicode)
 more efficient and pleasant to use.
 
-## Add a new, distinct "rune" type
+## Add a new, distinct `rune` type
 
 We could maintain the current definition of the `char` type, and introduce a new `rune` type to represent Unicode scalar values
 instead ("rune" being the term both Go and C# use for this).
@@ -238,31 +264,104 @@ that supports verification easily but is inefficient at runtime.
 The proposed lazy decoding approach should provide a good balance between the clean expression of concepts
 and efficient, unsurprising runtime behavior.
 
+## Change `char` to mean an extended grapheme cluster
+
+Rather than just augmenting `char` to represent the more abstract Unicode scalar value concept,
+we could push further and define it to mean an [*extended grapheme cluster*](https://unicode.org/reports/tr29/#Grapheme_Cluster_Boundaries),
+which is the Unicode concept closest to what humans perceive visually as a distinct, atomic "character".
+This would make operations on strings as sequences of values correspond more closely to meaningful concepts on text,
+such as `|s|` actually providing a "character count" that aligns with expectations in a word processor.
+
+Although there are definite benefits to this approach for logic that heavily processes text
+(and is the approach that the [Swift](#swift) language takes, for example),
+the definition of how scalar values are grouped into grapheme clusters
+is much more complicated and locale-specific than the simple mathematical rules of common encodings
+like UTF-8 and UTF-16. This means a higher cost and risk of bugs in adding these concepts
+to the core definition of Dafny, and a much higher likelihood of having to change
+the language definition or implementation in future versions of Unicode.
+It would also mean `char` can no longer be represented as a single integer value,
+instead needing multiple scalar values in some cases,
+which would be a large a deep change to the encoding of `char` in the Boogie prelude and translator.
+
 # Prior art
 [prior-art]: #prior-art
 
 Unicode has a long and messy history, and the approach to supporting Unicode varies dramatically across different programming languages.
-Here is the current state of several popular programming languages, especially those that Dafny currently or will likely
-soon support compiling to:
+Here is the current state of several popular programming languages, especially those that Dafny currently supports compiling to,
+or could in the future:
 
-***TODO***
+## C#:
 
-* C#:
-* Java:
-* Go:
-* JavaScript:
-* C/C++:
-* Python:
-* Ruby:
-* Rust:
-* Swift:
+`char` is an alias for the `System.Char` value type, which represents a single character as a UTF-16 code unit. 
+`string` is an alias for the `System.String` class, which represents an immutable sequence of `char` values.
+The `System.Text.Rune` struct is provided to represent any Unicode scalar value,
+and its API guarantees that invalid values (e.g. surrogates) will be rejected on construction.
+The method `String.EnumerateRunes()` produces the sequence of runes in a string via an `IEnumerator<Rune>`.
+
+## Java:
+
+`char` is one of the eight primitive types in Java, and also represents a UTF-16 code unit.
+In recent versions of the Java Runtime Environment, the `java.lang.String` class supports
+encoding its data either in UTF-16 or in Latin-1, where the latter is an optimization for space
+when all characters in the string are supported by this encoding. 
+
+Java does not included a dedicated type for Unicode scalar values
+and instead uses the 32-bit wide `int` primitive type.
+
+## Go:
+
+In Go a string is a read-only slice of bytes, which generally contains UTF-8 encoded bytes
+but may contain arbitrary bytes. The `rune` type is an alias for `int32`.
+
+## JavaScript:
+
+The JavaScript `String` type represents an immutable sequence of UTF-16 code units as integer values.
+There is no distinct type for representing individual characters.
+
+## C++:
+
+The `char` type represents bytes, and the `std::string` class from the standard library
+operates on bytes as character, and generally does not produce correct results if used
+together with any encoding other than single-byte encodings such as ASCII.
+C++11 added two new character types, `char16_t` and `char32_t`, 
+and two new corresponding `std::u16string` and `std::u32string` collection classes.
+It also provides three new kinds of string literals,
+`u8"..."`, `u"..."`, and `U"..."`,
+which produce binary values encoded with UTF-8, UTF-16, and UTF-32 respectively.
+
+## Python:
+
+In Python 2, the `str` type was used for both binary and text data.
+A separate `unicode` type was introduced to store textual data,
+and a separate mode for unicode string literals (`u"..."`).
+Python 3 changed `str` to be this `unicode` datatype instead.
+Like JavaScript, Python has no dedicated character type,
+and just uses the unbounded `int` type for Unicode scalar values.
+
+## Rust:
+
+The `char` type directly represents any Unicode scalar value, and rejects out-of-range values.
+The "string slice" type `str` is the most primitive string type,
+which is guaranteed to refers to valid UTF-8 data.
+It primarily acts as a sequence of bytes, but directly provides many methods that work with `char` values:
+`chars()` provides an iterator of `char` values,
+`get(<slice>)` returns a subslice but produces `None` if the bounds do not align with UTF-8 sequence boundaries,
+etc.
+
+## Swift:
+
+Swift defines `String` as a collection of characters,
+and unusually defines `Character` as an [*extended grapheme cluster*](https://unicode.org/reports/tr29/#Grapheme_Cluster_Boundaries),
+which is the closest concept to an atomic characeter as perceived visually by users.
+Unicode scalar values are represented with a distinct `Unicode.Scalar` structure instead.
+`String` provides `utf8`, `utf16`, and `unicodeScalars` views
+that present the contents as sequences of UTF-8, UTF-16, or UTF-32 code units respectively.
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-***TODO***
-
-# Future possibilities
-[future-possibilities]: #future-possibilities
-
-***TODO***
+Is there anything more we can do to make migration easier and safer for users?
+Chance are very good that all Dafny code in existence to date either will not change behavior
+across this change, or will slightly improve because of the improved handling of surrogate code points.
+I have been unable to think of anything that would provide more value than the verifier will already provide,
+but I am open to suggestion as always!
