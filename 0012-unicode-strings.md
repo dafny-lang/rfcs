@@ -94,7 +94,7 @@ var s4 := @"Unicode is just so 😎";  // Escape sequences are not supported in 
 The exact representation of strings at runtime, including the particular encoding,
 is an implementation detail of a particular backend, and will often be optimized for the idioms and support
 of the target environment. Enabling Unicode characters will change the target language types used to
-represent characters and strings, and hence may cause compilation errors when using additional external
+represent characters and strings, and hence may be a breaking change when using additional external
 target language code.
 
 Note also that although the Unicode scalar value concept is more general than UTF-16 code units,
@@ -102,7 +102,7 @@ it still does not always correspond to what humans will perceive as single atomi
 For example, the string `"e\u0301"` contains two Unicode scalar values, but renders as the single character `é`.
 See the concept of grapheme clusters [here](https://unicode.org/reports/tr29/) for more details.
 The proposed change to the `char` type is only intended to allow the Dafny language to safely abstract
-away from encodings, especially to support verifiably-correct code that must compile to multiple target languages.
+away from encodings, especially to support correct code that must compile to multiple target languages.
 Providing more of the concepts defined by the Unicode standard is left out of scope for this proposal,
 under the assumption that it will enable such implementations via Dafny source code in sharable libraries instead.
 
@@ -144,7 +144,7 @@ e.g. between `Dafny.ISequence<char>` and `System.String` in C#.
 Even there, the various Dafny runtime libraries provide helper methods that can be adjusted 
 to work with the new semantics of Unicode characters.
 In the C# runtime, for example, the `Sequence.FromString(string)` method converts a native string
-to a equivalent `Dafny.ISequence<char>` copy.
+to an equivalent `Dafny.ISequence<char>` copy.
 A parallel method named something similar to `Sequence.UnicodeFromString(string)` could be added
 that would return a `Dafny.ISequence<uint32>` copy instead.
 Migrating an existing codebase should reduce to a simple find-and-replace operation.
@@ -236,7 +236,7 @@ that is at least adequate to replace all existing usage of sequence operations.
 These interfaces often become very large to support all common string operations efficiently,
 and would need very careful thought.
 Although unusual, representing strings directly as sequences of abstract characters
-works very well for a verification-focussed language like Dafny,
+works very well for a verification-focused language like Dafny,
 since sequences are already a deep built-in concept in the language semantics.
 
 This new type could alternatively be introduced with a different name, such as `unicode` as in Python 2,
