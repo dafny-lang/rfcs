@@ -25,8 +25,7 @@ The two primary motivations behind this change are correctness and compatibility
 ## Correctness
 
 The current definition of these types means that the Dafny `string` type allows data that is not a valid Unicode string.
-The value `"\uD800"`, for example, is not a valid Unicode string and has no valid encoding in UTF-8, UTF-16,
-or any other encoding.
+The value `"\uD800"`, for example, is not a valid Unicode string and has no valid interpretation as a sequence of abstract characters.
 This means that any logic to process strings must manually specify pre-conditions to exclude invalid values, or
 be less precise with its specification. For example, an implementation of UTF-8 encoding would have to reject
 invalid inputs in a pre-condition, dynamically fail if given invalid strings, or implement a lossy encoding by
@@ -35,7 +34,7 @@ discarding or replacing invalid characters.
 ## Compatibility
 
 The current definitions of `string` and `char` are biased towards using a UTF-16 encoding at runtime.
-This aligns well with some compilation target languages which also use UTF-16, such as Java, C#, and JavaScript, 
+This aligns well with some compilation target languages which also use (possibly ill-formed) UTF-16, such as Java, C#, and JavaScript, 
 but less well with those that use the recently more popular UTF-8 encoding, such as Go or Rust.
 Any Dafny code that interfaces with external code will often have to convert between `string` values and
 native representations of strings, and baking in the assumption of UTF-16 imposes a complexity and performance
@@ -55,6 +54,23 @@ The default prior to Dafny 4.0 is `/unicodeChar:0`, but the default as of Dafny 
 This change in definition can cause previously verified code to no longer verify,
 since expressions such as `someIntValue as char` or `someCharValue + 'a'` are no longer allowed to result in
 surrogate code points.
+Using `/unicodeChar:1` will also cause the parser to reject invalid string literals,
+such as the `"\uD800"` value above.
+This ensures Dafny string literals can always be represented in UTF-8, UTF-16, or any other Unicode encoding.
+
+The exact representation of strings at runtime, including the particular encoding,
+is an implementation detail of a particular backend, and will often be optimized for the idioms and support
+of the target environment. 
+This also applies to string literals in Dafny source code:
+these will generally be represented using the native string implementation in the target language,
+in some cases converting from the UTF-8 encoding used for Dafny source text to UTF-16.
+The presence of UTF-16 `\uXXXX` escape sequences will not automatically imply using UTF-16 at runtime.
+The `string` type, as an alias of `seq<char>`,
+will not offer any direct ways to access the raw bytes used to encode the abstract value, 
+which ensures Dafny code that uses strings can efficiently behave consistently across backends.
+Enabling Unicode characters will change the target language types used to
+represent characters and strings, and hence may be a breaking change when using additional external
+target language code.
 
 This change can also result in behavioral changes that may not be caught by verification,
 as they may not intersect with any explicit specifications.
@@ -78,7 +94,7 @@ but in previous versions of Dafny,
 string and character literals could only contain printable and white-space ASCII characters,
 due to a limitation of the Coco/R parser generator the toolchain uses.
 This has been fixed, and both standard form and verbatim form string literals now allow any Unicode characters.
-A second form of escape sequence accepting a hexadecimal number with up to six digits, `\u{XXXXXX}`, 
+A second form of escape sequence accepting a hexadecimal number with up to six digits, `\U{XXXXXX}`, 
 is now provided to support characters outside of the Basic Multilingual Plane
 using their direct Unicode code points instead of using surrogates.
 These changes are fully backwards-compatible and not controlled by the `unicodeChar` flag.
@@ -86,16 +102,10 @@ These changes are fully backwards-compatible and not controlled by the `unicodeC
 ```dafny
 // Several different ways to express the same string literal
 var s1 := "Unicode is just so \ud83d\ude0e";
-var s2 := "Unicode is just so \u{1F60E}";
+var s2 := "Unicode is just so \U{1F60E}";
 var s3 := "Unicode is just so 😎";
 var s4 := @"Unicode is just so 😎";  // Escape sequences are not supported in verbatim strings
 ```
-
-The exact representation of strings at runtime, including the particular encoding,
-is an implementation detail of a particular backend, and will often be optimized for the idioms and support
-of the target environment. Enabling Unicode characters will change the target language types used to
-represent characters and strings, and hence may be a breaking change when using additional external
-target language code.
 
 Note also that although the Unicode scalar value concept is more general than UTF-16 code units,
 it still does not always correspond to what humans will perceive as single atomic characters when rendered.
