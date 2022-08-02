@@ -308,21 +308,29 @@ or could in the future:
 The `System.Text.Rune` struct is provided to represent any Unicode scalar value,
 and its API guarantees that invalid values (e.g. surrogates) will be rejected on construction.
 The method `String.EnumerateRunes()` produces the sequence of runes in a string via an `IEnumerator<Rune>`.
+Any invalid UTF-16 sequences are enumerated as the `U+FFFD` "Replacement Character" `Rune` value.
 
 ## Java:
 
 `char` is one of the eight primitive types in Java, and also represents a UTF-16 code unit.
 In recent versions of the Java Runtime Environment, the `java.lang.String` class supports
 encoding its data either in UTF-16 or in Latin-1, where the latter is an optimization for space
-when all characters in the string are supported by this encoding. 
+when all characters in the string are supported by this encoding.
+A `String` value may contain invalid sequences such as unpaired surrogates.
 
 Java does not included a dedicated type for Unicode scalar values
 and instead uses the 32-bit wide `int` primitive type.
+The `CharSequence.codePoints()` method produces an `IntStream` enumerating the UTF-32 code points in a valid String,
+but will enumerate unpaired surrogates directly as zero-extended `int` values.
 
 ## Go:
 
 In Go a string is a read-only slice of bytes, which generally contains UTF-8 encoded bytes
-but may contain arbitrary bytes. The `rune` type is an alias for `int32`.
+but may contain arbitrary bytes: the Go compiler will reject invalid string literals,
+but it is still possible for strings to contain invalid UTF-8 bytes at runtime.
+The `rune` type is an alias for `int32`,
+and the Go compiler does not prevent casting out-of-range values such as `0x11_0000`
+as `rune` values.
 
 ## JavaScript:
 
@@ -332,13 +340,13 @@ There is no distinct type for representing individual characters.
 ## C++:
 
 The `char` type represents bytes, and the `std::string` class from the standard library
-operates on bytes as character, and generally does not produce correct results if used
+operates on bytes as characters, and generally does not produce correct results if used
 together with any encoding other than single-byte encodings such as ASCII.
 C++11 added two new character types, `char16_t` and `char32_t`, 
 and two new corresponding `std::u16string` and `std::u32string` collection classes.
 It also provides three new kinds of string literals,
 `u8"..."`, `u"..."`, and `U"..."`,
-which produce binary values encoded with UTF-8, UTF-16, and UTF-32 respectively.
+which produce `char[N]`, `char16_t[N]`, and `char32_t[N]` values encoded with UTF-8, UTF-16, and UTF-32 respectively.
 
 ## Python:
 
