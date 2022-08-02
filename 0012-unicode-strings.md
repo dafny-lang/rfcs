@@ -10,12 +10,12 @@ The Dafny `string` type is an alias for the type `seq<char>`, and the `char` typ
 representing individual characters. `char` values can be converted to and from `int` values (using `as char` and `as int` expressions),
 and an `int` value corresponding to a `char` value is currently required to be a valid UTF-16 code unit, i.e. in the range
 `[0, 65536)`. This range includes the so-called ["surrogate" code points](https://unicode.org/faq/utf_bom.html#utf16-2),
-i.e. values in the range `[0xD800, 0xDFFF]`,
+i.e. values in the range `[0xD800, 0xE000)`,
 which must be used in pairs in order to encode some characters in UTF-16,
 and are not assignable Unicode code points themselves.
 
 I propose a breaking change in Dafny 4.0, to make `char` represent any Unicode code point, independent of the encoding used.
-This means that the corresponding `int` value for a `char` must always be a [Unicode scalar value](https://www.unicode.org/versions/Unicode14.0.0/ch03.pdf#G7404), meaning any value in the range `[0, 0x10FFFF]` but excluding the surrogate code points from `[0xD800, 0xDFFF]`.
+This means that the corresponding `int` value for a `char` must always be a [Unicode scalar value](https://www.unicode.org/versions/Unicode14.0.0/ch03.pdf#G7404), meaning any value in the range `[0, 0x11_0000)` but excluding the surrogate code points from `[0xD800, 0xE000)`.
 
 # Motivation
 [motivation]: #motivation
@@ -116,8 +116,8 @@ The only change is to replace expressions such as `0 <= n && n < 65536` with a s
 
 ```boogie
 function char#IsUnicodeScalarValue(n: int): bool {
-  (0                  <= n && n <= 55295   /* 0xD7FF */) || 
-  (57344 /* 0xE000 */ <= n && n <= 1114111 /* 0x10FFFF */ )
+  (0                  <= n && n < 55296   /* 0xD800 */) || 
+  (57344 /* 0xE000 */ <= n && n < 1114112 /* 0x11_0000 */)
 }
 ```
 
