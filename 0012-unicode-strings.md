@@ -14,7 +14,7 @@ i.e. values in the range `[0xD800, 0xE000)`,
 which must be used in pairs in order to encode some characters in UTF-16,
 and are not assignable Unicode code points themselves.
 
-I propose a breaking change in Dafny 4.0, to make `char` represent any Unicode code point, independent of the encoding used.
+I propose a breaking change in Dafny 4.0, to make `char` represent Unicode code points instead, independent of the encoding used.
 This means that the corresponding `int` value for a `char` must always be a [Unicode scalar value](https://www.unicode.org/versions/Unicode14.0.0/ch03.pdf#G7404), meaning any value in the range `[0, 0x11_0000)` but excluding the surrogate code points from `[0xD800, 0xE000)`.
 
 # Motivation
@@ -43,9 +43,9 @@ penalty for multiple target environments.
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-As of Dafny 4.0, the default semantics of the `char` type have been changed to represent Unicode scalar values instead of UTF-16 code points.
-This means that surrogate code points, meaning those in the range `[0xD800, 0xDFFF]`, are no longer allowed. This also means
-code points that require more than 16 bits, meaning those in the range `[0x10000, 0x1FFFF]`, are now directly representable
+As of Dafny 4.0, the default semantics of the `char` type have been changed to represent Unicode scalar values instead of UTF-16 code units.
+This means that surrogate code points, meaning those in the range `[0xD800, 0xE000)`, are no longer allowed. This also means
+code points that require more than 16 bits, meaning those in the range `[0x10000, 0x110000)`, are now directly representable
 as `char` values.
 
 The definition of the `char` type is controlled by a command-line switch called `/unicodeChar`, where `/unicodeChar:0`
@@ -54,17 +54,23 @@ The default prior to Dafny 4.0 is `/unicodeChar:0`, but the default as of Dafny 
 This change in definition can cause previously verified code to no longer verify,
 since expressions such as `someIntValue as char` or `someCharValue + 'a'` are no longer allowed to result in
 surrogate code points.
-Using `/unicodeChar:1` will also cause the parser to reject invalid string literals,
+
+Using `/unicodeChar:1` will also cause the parser to reject `/uXXXX` UTF-16 code unit escape sequences,
 such as the `"\uD800"` value above.
+A new `\U{XXXXXX}` escape sequence is available to encode Unicode scalar values directly instead,
+accepting between one and dix hexadecimal digits.
 This ensures Dafny string literals can always be represented in UTF-8, UTF-16, or any other Unicode encoding.
+This new escape sequence can always be used, independently of the `/unicodeChar` switch value,
+and hence can be used to aid in migrating from the old semantics to the new semantics.
+A utility will be provided to automatically rewrite escape sequences in the first style into the second
+(or raise an error on invalid surrogate uses).
 
 The exact representation of strings at runtime, including the particular encoding,
 is an implementation detail of a particular backend, and will often be optimized for the idioms and support
-of the target environment. 
+of the target environment.
 This also applies to string literals in Dafny source code:
 these will generally be represented using the native string implementation in the target language,
 in some cases converting from the UTF-8 encoding used for Dafny source text to UTF-16.
-The presence of UTF-16 `\uXXXX` escape sequences will not automatically imply using UTF-16 at runtime.
 The `string` type, as an alias of `seq<char>`,
 will not offer any direct ways to access the raw bytes used to encode the abstract value, 
 which ensures Dafny code that uses strings can efficiently behave consistently across backends.
@@ -79,7 +85,7 @@ and hence differently on Dafny 4.0 compared to earlier versions:
 
 ```dafny
 method Main() {
-  var s := "Unicode is just so \ud83d\ude0e";
+  var s := "Unicode is just so \U{1F60E}";
   print s, "\n"     // "Unicode is just so 😎" (not affected by /unicodeChar)
   print |s|, "\n"   // /unicodeChar:0 => "21"
                     // /unicodeChar:1 => "20"
@@ -88,20 +94,19 @@ method Main() {
 }
 ```
 
-A related but largely orthogonal issue has also been addressed.
-Dafny source code files must be encoded in UTF-8,
-but in previous versions of Dafny,
+Note that a related but largely orthogonal issue [has been fixed
+(although not yet released at the time of writing this).
+Dafny source code files must be encoded in UTF-8, but in previous versions of Dafny,
 string and character literals could only contain printable and white-space ASCII characters,
 due to a limitation of the Coco/R parser generator the toolchain uses.
-This has been fixed, and both standard form and verbatim form string literals now allow any Unicode characters.
-A second form of escape sequence accepting a hexadecimal number with up to six digits, `\U{XXXXXX}`, 
-is now provided to support characters outside of the Basic Multilingual Plane
-using their direct Unicode code points instead of using surrogates.
-These changes are fully backwards-compatible and not controlled by the `unicodeChar` flag.
+Although this is now fixed, the scanner still downcasts Unicode code points to the C# `char` type
+and hence truncates many character values.
+This will be addressed as well such that values outside the Basic Multilingual Plane
+can also be used directly in string literals:
 
 ```dafny
 // Several different ways to express the same string literal
-var s1 := "Unicode is just so \ud83d\ude0e";
+var s1 := "Unicode is just so \ud83d\ude0e"; // Only allowed with /unicodeChar:0
 var s2 := "Unicode is just so \U{1F60E}";
 var s3 := "Unicode is just so 😎";
 var s4 := @"Unicode is just so 😎";  // Escape sequences are not supported in verbatim strings
@@ -109,7 +114,7 @@ var s4 := @"Unicode is just so 😎";  // Escape sequences are not supported in 
 
 Note also that although the Unicode scalar value concept is more general than UTF-16 code units,
 it still does not always correspond to what humans will perceive as single atomic characters when rendered.
-For example, the string `"e\u0301"` contains two Unicode scalar values, but renders as the single character `é`.
+For example, the string `"e\U{301}"` contains two Unicode scalar values, but renders as the single character `é`.
 See the concept of grapheme clusters [here](https://unicode.org/reports/tr29/) for more details.
 The proposed change to the `char` type is only intended to allow the Dafny language to safely abstract
 away from encodings, especially to support correct code that must compile to multiple target languages.
