@@ -221,6 +221,12 @@ If anything, the longer we wait to correct this issue,
 the more Dafny code will continue to be written with subtle bugs that verification does not detect,
 or even new compilation targets that introduce them when compiling.
 
+One disadvantage of this strict approach to the definition of `string` is that
+invalid string data according to the Unicode standard, such as some file paths on Windows,
+cannot be directly represented as a Dafny `string`. This means that some low-level
+APIs or more specialized applications will need to resort to using a type such as
+`seq<uint16>` instead.
+
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
@@ -293,7 +299,7 @@ This would make it more obvious when reading Dafny source code in isolation whet
 There are often few explicit references to individual character values in code that references string values, however,
 and even when the `char` type is used it is often only implicitly referenced because of type inference.
 This alternative does not seem to be worth the implementation cost or additional cognitive load on users,
-especially since it is hard to imagine any codebase needing to use both `char` and `rune` together.
+especially since it will be rare for a codebase to use both `char` and `rune` together.
 
 ## Disallow compilation of string indexing
 
@@ -304,7 +310,7 @@ or to sequential access via the new [ordered quantification features](https://gi
 This would be a much more disruptive breaking change for existing code, however.
 String indexing would not be the first instance in Dafny of a simple, mathematical expression
 that supports verification easily but is inefficient at runtime.
-The proposed lazy decoding approach should provide a good balance between the clean expression of concepts
+The proposed optimizations should provide a good balance between the clean expression of concepts
 and efficient, unsurprising runtime behavior.
 
 ## Change `char` to mean an extended grapheme cluster
