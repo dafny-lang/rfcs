@@ -99,7 +99,7 @@ Note that a related but largely orthogonal issue [has been fixed
 Dafny source code files must be encoded in UTF-8, but in previous versions of Dafny,
 string and character literals could only contain printable and white-space ASCII characters,
 due to a limitation of the Coco/R parser generator the toolchain uses.
-Although this is now fixed, the scanner still downcasts Unicode code points to the C# `char` type
+Although this is now fixed, the scanner still downcasts Unicode code points to the 16-bit C# `char` type
 and hence truncates many character values.
 This will be addressed as well such that values outside the Basic Multilingual Plane
 can also be used directly in string literals:
@@ -139,7 +139,6 @@ function char#IsUnicodeScalarValue(n: int): bool {
 As described above in the user-facing description of this feature, this will cause verification failures by design.
 Unlike many other programming languages that have added Unicode support over a major version bump,
 Dafny is unusually well-positioned to catch most regressions statically.
-Given this, it does not seem worth the effort to build any additional migration features to help customers adopt this change.
 
 ## Compilation/Runtime
 
@@ -164,7 +163,15 @@ A parallel method named something similar to `Sequence.UnicodeFromString(string)
 that would return a `Dafny.ISequence<uint32>` copy instead.
 Migrating an existing codebase should reduce to a simple find-and-replace operation.
 
-Each runtime should also make it possible to wrap an idiomatic representation of a Unicode string
+Note that this aspect of the foreign function interface in Dafny is best handled on a per-backend basis.
+It isn't generally tractable to define a single `NativeString` type with consistent semantics,
+or even a consistent API, across all supported backends.
+There are even substantial differences across languages that both encode strings in UTF-8, for example:
+a Rust string is guaranteed to hold valid UTF-8 data, whereas a Go string is not,
+and hence one conversion function may fail where another cannot.
+
+The above conversion functions currently copy data,
+but each runtime should instead make it possible to wrap an idiomatic representation of a Unicode string
 as the runtime representation of the Dafny `seq<char>` type, without having to make an additional copy. 
 At the time of writing this, only the Java runtime supports this feature,
 via a `StringDafnySequence` class that wraps a `java.lang.String` value and implements the `ISequence<Character>` interface.
@@ -174,16 +181,27 @@ The one wrinkle with this feature is that methods such as `select(i)`, which imp
 currently take constant time on an `StringDafnySequence`, since a `java.lang.String` also stores its contents as UTF-16
 code units. However, if `UnicodeStringDafnySequence.select(i)` will need to produce the i'th Unicode scalar value instead,
 this will require decoding all characters up to that index, which will take linear time in general instead.
-The solution will be to lazily decode strings into their UTF-32 encoded equivalent (i.e. sequence of scalar values)
-on the first operation that requires it. This mirrors the optimization of evaluating concatenation of sequences
-lazily in the current C# and Java runtimes, and means that in most code that manipulates individual characters,
-the amortized runtime of indexing operations will still be constant.
 
-Note that this optimization will also help offset the fact that materializing and manipulating individual `char` values
+There are at two three possible approaches a given backend can take:
+
+1. Cache the most recently calculated index into the string value.
+   On the next indexing operation, decode forwards or backwards from this position
+   to the requested index.
+   This would allow a series of indexing operations in non-decreasing (or non-increasing) order
+   to take amortized linear time, and only perform poorly for truly random access.
+
+2. Lazily decode strings into their UTF-32 encoded equivalent (i.e. sequence of scalar values)
+   on the first operation that requires it. This mirrors the optimization of evaluating concatenation of sequences
+   lazily in the current C# and Java runtimes, and means that in most code that manipulates individual characters,
+   the amortized runtime of indexing operations will still be constant. 
+
+Note that either optimization will also help offset the fact that materializing and manipulating individual `char` values
 will in general require twice as much memory after this change.
-The compiler can leverage this support to initially store string literal values as UTF-8 bytes,
+The compiler can leverage this support to initially store string literal values in UTF-8 or UTF-16,
 and operations such as concatenation or equality comparisons can be implemented
 without having to decode these bytes into character values.
+We can decide on which optimization is better based on profiling typical applications,
+and possibly even provide both as options.
 
 # Drawbacks
 [drawbacks]: #drawbacks
@@ -245,6 +263,13 @@ Dafny could instead make `string` an alias for a different type, whether built-i
 that treats strings as a more specialized datatype. It could then be more prescriptive about picking a definitive encoding to
 support directly (most likely UTF-8).
 
+The primary advantage of this would be avoiding the potential trap of expensive random access
+of individual character values at runtime.
+Such a `string` type would instead only provide access to individual characters
+through some kind of enumeration interface
+similar to those proposed in this [standard library PR](https://github.com/dafny-lang/libraries/pull/37).
+It would still use a ghost `seq<char>` value to specify the underlying data.
+
 This would certainly require more effort for existing code to migrate to.
 It is also a much more expensive solution to implement, since it requires creating an API for strings
 that is at least adequate to replace all existing usage of sequence operations.
@@ -253,6 +278,8 @@ and would need very careful thought.
 Although unusual, representing strings directly as sequences of abstract characters
 works very well for a verification-focused language like Dafny,
 since sequences are already a deep built-in concept in the language semantics.
+Note that sequences already do not guarantee constant time for a single `s[i]` expression,
+given the lazy evaluation of concatenation.
 
 This new type could alternatively be introduced with a different name, such as `unicode` as in Python 2,
 while keeping the alias of `string` for `seq<char>`.
@@ -384,11 +411,23 @@ that present the contents as sequences of UTF-8, UTF-16, and UTF-32 code units r
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-Is there anything more we can do to make migration easier and safer for users?
-Chance are very good that all Dafny code in existence to date either will not change behavior
-across this change, or will slightly improve because of the improved handling of surrogate code points.
-I have been unable to think of anything that would provide more value than the verifier will already provide,
-but I am open to suggestion as always!
+* How should a function such as `UTF8BytesAsString(utf8Bytes: seq<uint8>): string`
+  be implemented? It can absolutely be implemented in pure Dafny
+  as per the logic under https://github.com/dafny-lang/libraries/blob/master/src/Unicode,
+  but the result will be an unoptimized sequence of 32-bit values.
+  This could be implemented in the per-language Dafny runtimes instead,
+  and hence take advantage of the native string wrappers described above.
+  Ideally there would be some way to have a single verified Dafny implementation of this
+  conversion function that would still maintain the memory efficiency of UTF-8.
+* One use case this proposal does not cover is including a Dafny type
+  that will compile to a native type used for UTF-16 code units,
+  such as `char` in Java or C#, or `char16_t` in C++.
+  User Dafny code can come close by defining a `newtype` with the appropriate bounds,
+  but this will compile to a compatible integral native type
+  such as `uint16` instead.
+  Having to cast between this type and the native character type 
+  does not currently seem to be enough of a usability or efficiency concern
+  to worry about.
 
 # Future possibilities
 
