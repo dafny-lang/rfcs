@@ -55,10 +55,10 @@ This change in definition can cause previously verified code to no longer verify
 since expressions such as `someIntValue as char` or `someCharValue + 'a'` are no longer allowed to result in
 surrogate code points.
 
-Using `/unicodeChar:1` will also cause the parser to reject `/uXXXX` UTF-16 code unit escape sequences,
+Using `/unicodeChar:1` will also cause the parser to reject `\uXXXX` UTF-16 code unit escape sequences,
 such as the `"\uD800"` value above.
 A new `\U{XXXXXX}` escape sequence is available to encode Unicode scalar values directly instead,
-accepting between one and dix hexadecimal digits.
+accepting between one and six hexadecimal digits.
 This ensures Dafny string literals can always be represented in UTF-8, UTF-16, or any other Unicode encoding.
 This new escape sequence can always be used, independently of the `/unicodeChar` switch value,
 and hence can be used to aid in migrating from the old semantics to the new semantics.
@@ -94,7 +94,7 @@ method Main() {
 }
 ```
 
-Note that a related but largely orthogonal issue [has been fixed
+Note that a related but largely orthogonal issue has been fixed
 (although not yet released at the time of writing this).
 Dafny source code files must be encoded in UTF-8, but in previous versions of Dafny,
 string and character literals could only contain printable and white-space ASCII characters,
@@ -182,7 +182,7 @@ currently take constant time on an `StringDafnySequence`, since a `java.lang.Str
 code units. However, if `UnicodeStringDafnySequence.select(i)` will need to produce the i'th Unicode scalar value instead,
 this will require decoding all characters up to that index, which will take linear time in general instead.
 
-There are at two three possible approaches a given backend can take:
+There are at least two possible approaches a given backend can take:
 
 1. Cache the most recently calculated index into the string value.
    On the next indexing operation, decode forwards or backwards from this position
@@ -330,7 +330,7 @@ to the core definition of Dafny, and a much higher likelihood of having to chang
 the language definition or implementation to support future versions of Unicode.
 It would also mean `char` can no longer be represented as a single integer value,
 instead needing multiple scalar values in some cases,
-which would be a large a deep change to the encoding of `char` in the Boogie prelude and translator.
+which would be a large and deep change to the encoding of `char` in the Boogie prelude and translator.
 
 # Prior art
 [prior-art]: #prior-art
@@ -356,7 +356,7 @@ encoding its data either in UTF-16 or in Latin-1, where the latter is an optimiz
 when all characters in the string are supported by this encoding.
 A `String` value may contain invalid sequences such as unpaired surrogates.
 
-Java does not included a dedicated type for Unicode scalar values
+Java does not include a dedicated type for Unicode scalar values
 and instead uses the 32-bit wide `int` primitive type.
 The `CharSequence.codePoints()` method produces an `IntStream` enumerating the UTF-32 code points in a valid String,
 but will enumerate unpaired surrogates directly as zero-extended `int` values.
