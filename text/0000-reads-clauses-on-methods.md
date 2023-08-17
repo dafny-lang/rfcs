@@ -69,7 +69,7 @@ class FibonacciMemoizer {
     reads this
     modifies this
   {
-    if n <= 2 {
+    if n < 2 {
       return 1;
     }
     if n in cache {
@@ -103,7 +103,7 @@ method {:extern} FirstNFibonaccis(n: nat) returns (rs: seq<nat>)
 {
   var memoizer := new FibonacciMemoizer();
   rs := [];
-  for i := 1 to n + 1 {
+  for i := 0 to n {
     var r := memoizer.Get(i);
     rs := rs + [r];
   }
@@ -113,8 +113,6 @@ method {:extern} FirstNFibonaccis(n: nat) returns (rs: seq<nat>)
 When sharing state externally really is necessary, it must be implemented externally in native code, where native facilities for synchronizing access to mutable state can be used. Therefore the solution is to push the caching logic into the target language instead:
 
 ```dafny
-datatype Option<T> = Some(value: T) | None
-
 //
 // Wrapper around a concurrent data structure, such as
 // ConcurrentHashMap<K, V> in Java.
@@ -131,6 +129,11 @@ class {:extern} ExternalMutableMap<K, V> {
   method {:extern} Get(k: V) returns (v: Option<V>) reads {}
 }
 
+// Necessary to support the concurrency-safe signature of Get above,
+// since Dafny can no longer track whether the map contains a key or not,
+// so Get must support the case where the key is not in the map.
+datatype Option<T> = Some(value: T) | None
+
 class FibonacciMemoizer {
   const cache: ExternalMutableMap<nat, nat>
   constructor() reads {} {
@@ -139,7 +142,7 @@ class FibonacciMemoizer {
   method Get(n: nat) returns (r: nat)
     reads {}
   {
-    if n <= 2 {
+    if n < 2 {
       return 1;
     }
     var cached := cache.Get(n);
@@ -168,12 +171,32 @@ Implementing the translation of `reads` clauses on methods to Boogie should be r
 
 We also need to ensure that each Dafny compiler produces "thread-safe" code when given code that is verified to not depend on shared mutable state, whenever that is a meaningful requirement for the target language. This is technically independent from the feature proposed here, but is necessary for users to infer that it can be used into order to produce thread-safe code, and is not an explicitly documented property of the compilers and runtimes nor are there any mechanisms in the regression test suite to ensure it. The main likely source of race conditions is in optimizations of data types in the runtimes that are semantically immutable but contain mutable internal state, such as the lazy concatenated sequence resolution in the [C#](https://github.com/dafny-lang/dafny/blob/90eb1084d9862384accd03fb5a1c8af500212a05/Source/DafnyRuntime/DafnyRuntime.cs#L1111-L1120) and [Java](https://github.com/dafny-lang/dafny/blob/90eb1084d9862384accd03fb5a1c8af500212a05/Source/DafnyRuntime/DafnyRuntimeJava/src/main/java/dafny/DafnySequence.java#L756-L761) runtimes. Avoiding such bugs will involve applying industry-standard tooling for analyzing and testing for race conditions, such as [Coyote](https://microsoft.github.io/coyote/) for C# code.
 
+One final important case is functions-by-method: currently it is harmless for the `by method` body to read state that the
+`function` body does not, because as long as the `by method` body is proven equivalent to the `function` body,
+using the `by method` body instead of the `function` body at runtime is sound.
+This is no longer true if the `by method` body reads mutable state that the `function` body does not,
+so it is necessary to check the `by method` body against the `reads` frame of the `function` body.
+Consider the following contrived example, in which the function specification implicitly includes `reads {}`
+and hence should be safe to execute concurrently,
+but the `by method` body is no longer guaranteed to produce the same value as the `function` body.
+
+```dafny
+function Always42(b: Box): int {
+  42
+} by method {
+  var result := 42;
+  result := result + b.x; // Error: insufficient reads clause to invoke method
+  result := result - b.x; // Error: insufficient reads clause to invoke method
+  return result;
+}
+```
+
 # Drawbacks
 [drawbacks]: #drawbacks
 
 The biggest potential drawback is that inexperienced Dafny programmers might have the incorrect impression that defining a tight `reads` clause for methods is necessary, and hence expend unnecessary effort for no benefit. The verifier would never prompt users to add `reads` clauses unless they already appear elsewhere in a codebase, so the issue is more that they could see them used in documentation or examples and not realize they are largely optional.
 
-Reusable Dafny code such as the modules in https://github.com/dafny-lang/libraries will need to specify `reads` clauses in order to support consumers that need to specify them. This does not appear to be a significant burden: at the time of writing this the `libraries` repo only contained one `method`. All other uses of the `method` keyword were in defining `function method`s instead, which already default to `reads {}` and hence can be used as is in the control flow of methods with `reads` clauses. Also note that adding a `reads` clause to a method that does not already have one will never break existing callers of that method. Again, the issue is more that users could imitate standard library `method` definitions and include superfluous `reads` clauses. The answer is likely to document explicitly why the standard library uses this feature and to emphasize that it should not be copied blindly. There is already a similar issue with the standard library's use of `{:trigger}` attributes, which are not encouraged in most Dafny codebases.
+Reusable Dafny code such as the modules in https://github.com/dafny-lang/libraries will need to specify `reads` clauses in order to support consumers that need to specify them. This does not appear to be a significant burden: at the time of writing this the `libraries` repo only contained one `method`. Also note that adding a `reads` clause to a method that does not already have one will never break existing callers of that method. Again, the issue is more that users could imitate standard library `method` definitions and include superfluous `reads` clauses. The answer is likely to document explicitly why the standard library uses this feature and to emphasize that it should not be copied blindly. There is already a similar issue with the standard library's use of `{:trigger}` attributes, which are not encouraged in most Dafny codebases.
 
 There is a chance that if and when explicit concurrency support is added to Dafny, the much more limited solution of verifying a method body `reads` and `modifies` nothing may become unused. This would make supporting `reads` clauses on methods harmless but also a maintenance burden. On the other hand, the feature is a generic and independent concept with relatively low implementation complexity, and the extra information provided by `reads` clauses is potentially useful for verifier and compiler optimizations in the future. There is a reasonable chance that `reads` clauses will be part of the future solution for concurrency anyway.
 
