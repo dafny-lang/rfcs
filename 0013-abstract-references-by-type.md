@@ -1,7 +1,7 @@
 - Feature Name: Abstract reference type by class
 - Start Date: 2024-08-03
-- RFC PR: [dafny-lang/rfcs#0000](https://github.com/dafny-lang/rfcs/pull/0000)
-- Dafny Issue: [dafny-lang/dafny#0000](https://github.com/dafny-lang/dafny/issues/0000)
+- RFC PR: [dafny-lang/rfcs#14](https://github.com/dafny-lang/rfcs/pull/14)
+- Dafny Issue: [dafny-lang/dafny#5169](https://github.com/dafny-lang/dafny/issues/5169)
 
 # Summary
 [summary]: #summary
